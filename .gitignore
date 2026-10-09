@@ -7,18 +7,21 @@ __pycache__/
 *.so
 
 # Distribution / packaging
+# Anchored to repo root (/) — these are generic names (lib, build, dist...)
+# that would otherwise match same-named directories anywhere in the tree,
+# e.g. frontend/src/lib/.
 .Python
-build/
+/build/
 develop-eggs/
-dist/
+/dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
-var/
+/var/
 wheels/
 share/python-wheels/
 *.egg-info/

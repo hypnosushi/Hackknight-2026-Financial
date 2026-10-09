@@ -1,0 +1,17 @@
+[project]
+name = "hackknight-2026-financial"
+version = "0.1.0"
+description = "Financial signals ingestion layer (news_api and friends)"
+requires-python = ">=3.11"
+dependencies = [
+    "newsapi-python==0.2.7",
+    "pydantic>=2.9",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
