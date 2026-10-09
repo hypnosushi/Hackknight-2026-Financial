@@ -26,7 +26,7 @@ has actually ingested.
 ## User Stories / Example Interactions
 
 - As a user, I input "give me recent data involving Nvidia" and get back a
-  summary pulling from recent X/Reddit/Polymarket events plus any flagged
+  summary pulling from recent X/Polymarket events plus any flagged
   signals about NVDA.
 
 ## Functional Requirements

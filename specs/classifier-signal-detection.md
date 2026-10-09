@@ -36,14 +36,14 @@ already-triaged events.
 ## User Stories / Example Interactions
 
 - As a user, I want to see "EVERYONE is talking about Micron" flagged before it
-  becomes obvious, based on a spike in mentions across Reddit/X.
+  becomes obvious, based on a spike in mentions across X.
 - As a user, when Tesla news breaks about expanding self-driving, I want to see
   a flagged signal suggesting its LIDAR supplier might be worth watching.
 
 ## Functional Requirements
 
-1. Extract entities/tickers from event text (from [[ingestion/x|X]],
-   [[ingestion/reddit|Reddit]], etc.) if not already tagged upstream.
+1. Extract entities/tickers from event text (from [[ingestion/x|X]], etc.)
+   if not already tagged upstream.
 2. Track mention volume per entity over a rolling window; flag spikes above a
    configurable threshold relative to baseline.
 3. Maintain a simple, likely manually-curated, map of entity relationships

@@ -31,7 +31,7 @@ trends in real time.
 - "General consensus" signal
   - Detect when EVERYONE is talking about something
   - Surface spikes: "we're seeing a spike in this, maybe look into it"
-- Track Reddit (e.g. r/WallStreetBets) posts → detect spikes in a given stock
+- Track X posts → detect spikes in a given stock
   - Example: everyone talking about Micron before it booms
 
 ## 3. Solana Integration — Use Cases
@@ -72,7 +72,7 @@ trends in real time.
 ## 6. Open Questions
 
 - [ ] Project name
-- [ ] Which data sources are in scope for MVP (X/Twitter, Kalshi, Reddit, Polymarket)?
+- [ ] Which data sources are in scope for MVP (X/Twitter, Kalshi, Polymarket)?
 - [ ] What does "classifier model like Jev" refer to — pick a specific model?
 - [ ] Scope of MCP server for the hackathon timebox
 - [ ] Solana vs. Alpaca (or both) for paper trading

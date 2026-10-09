@@ -11,7 +11,6 @@ and may be owned by a different person:
 | Spec | Source | Priority |
 |---|---|---|
 | [x.md](./x.md) | X / Twitter | Core |
-| [reddit.md](./reddit.md) | Reddit (r/WallStreetBets etc.) | Core |
 | [polymarket.md](./polymarket.md) | Polymarket public trades | Core |
 | [kalshi.md](./kalshi.md) | Kalshi | Stretch / maybe |
 | [official-releases.md](./official-releases.md) | Direct gov RSS (Fed/BLS/BEA/Treasury/OFAC) — Tier 1 | Core |
@@ -23,7 +22,7 @@ Every per-source worker emits events in this shape (draft, not final):
 
 ```
 {
-  "source": "x" | "reddit" | "polymarket" | "kalshi" | "official-releases" | "wire-news",
+  "source": "x" | "polymarket" | "kalshi" | "official-releases" | "wire-news",
   "id": "<source-native id>",
   "author": "<handle | wallet | username>",
   "text": "<raw content, if any>",

@@ -15,7 +15,7 @@ sharpens. The original unstructured brainstorm is preserved at
 
 | Spec | Status |
 |---|---|
-| [ingestion/](./ingestion/README.md) — X, Reddit, Polymarket, Kalshi, Official Releases (RSS), Wire News (NewsAPI) | Draft |
+| [ingestion/](./ingestion/README.md) — X, Polymarket, Kalshi, Official Releases (RSS), Wire News (NewsAPI) | Draft |
 | [jev-classification.md](./jev-classification.md) — per-item guardrail/labeling/routing/scoring | Draft |
 | [classifier-signal-detection.md](./classifier-signal-detection.md) | Draft |
 | [redis-cache-storage.md](./redis-cache-storage.md) | Draft |
@@ -28,7 +28,7 @@ sharpens. The original unstructured brainstorm is preserved at
 ## Rough Data Flow
 
 ```
-ingestion/{x,reddit,polymarket,kalshi,official-releases,wire-news}
+ingestion/{x,polymarket,kalshi,official-releases,wire-news}
         │  (normalized events)
         ▼
 jev-classification   (guardrail / event-type / route / score / actionable)
@@ -50,9 +50,8 @@ paper-trading / solana-integration  (acting on signals — separate track)
 ## Cross-Cutting Open Questions
 
 - **Project name** — still TBD.
-- **MVP source scope** — which of X / Reddit / Polymarket / Kalshi are actually
-  built for the hackathon vs. cut? (See each ingestion spec's own feasibility
-  notes — Reddit in particular needs an API-access check first.)
+- **MVP source scope** — which of X / Polymarket / Kalshi are actually built
+  for the hackathon vs. cut? (See each ingestion spec's own feasibility notes.)
 - **Classifier model split** — Jev 1.13 (fast, per-item gating/labeling — see
   [[jev-classification]]) vs. FinBERT (financially-tuned, slower — candidate
   for the heavier spike/relationship work in [[classifier-signal-detection]]).
