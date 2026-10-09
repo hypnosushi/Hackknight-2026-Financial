@@ -15,7 +15,7 @@ sharpens. The original unstructured brainstorm is preserved at
 
 | Spec | Status |
 |---|---|
-| [ingestion/](./ingestion/README.md) — X, Reddit, Polymarket, Kalshi | Draft |
+| [ingestion/](./ingestion/README.md) — X, Reddit, Polymarket, Kalshi, Official Releases (RSS), Wire News (NewsAPI) | Draft |
 | [classifier-signal-detection.md](./classifier-signal-detection.md) | Draft |
 | [redis-cache-storage.md](./redis-cache-storage.md) | Draft |
 | [search-rag.md](./search-rag.md) | Draft |
@@ -27,7 +27,7 @@ sharpens. The original unstructured brainstorm is preserved at
 ## Rough Data Flow
 
 ```
-ingestion/{x,reddit,polymarket,kalshi}
+ingestion/{x,reddit,polymarket,kalshi,official-releases,wire-news}
         │  (normalized events)
         ▼
 redis-cache-storage  ◄──────────────┐

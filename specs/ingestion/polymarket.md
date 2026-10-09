@@ -21,6 +21,11 @@ watching).
   events.
 - Make market data available for cross-entity relationship signals (handed off to
   [[classifier-signal-detection]]).
+- Capture Polymarket's own official account announcements (new contracts,
+  resolution decisions) — this is Tier 4 in [[wire-news]]'s source tiering,
+  but owned here since it's Polymarket-specific. Likely sourced via X
+  ([[x]]'s tracked-account mechanism) rather than a separate poller, unless
+  Polymarket exposes this directly via API.
 
 ## Non-Goals
 
@@ -71,6 +76,9 @@ with `"source": "polymarket"`; `amount` is the trade size.
   issues from the US (direct trading is blocked, but read access should differ).
 - Scope of "track relations between companies" — manual mapping of related
   tickers, or an attempt at automated inference?
+- Does Polymarket's API/activity feed surface new-contract and resolution
+  announcements directly, or is tracking their official X account the only
+  practical way to catch those?
 
 ## Acceptance Criteria
 

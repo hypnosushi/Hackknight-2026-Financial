@@ -16,6 +16,9 @@ intentionally thin until the team decides whether it's in scope.
 
 - Capture public market/trade data from Kalshi, mirroring the shape of
   [[polymarket]]'s ingestion.
+- (Stretch) Capture Kalshi's own official account announcements (new
+  contracts, resolution decisions) — this is Tier 4 in [[wire-news]]'s
+  source tiering, mirroring the same open question as [[polymarket]]'s.
 
 ## Non-Goals
 

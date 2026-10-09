@@ -58,7 +58,10 @@ with `"source": "x"`.
 - Which X API tier/access do we have for the hackathon, and does it support
   streaming or only polling/search?
 - Final list of tracked accounts and hashtags — curated manually, or
-  user-configurable?
+  user-configurable? The Tier 3 "individuals who move markets" list from
+  [[wire-news]] (Fed officials, Treasury Secretary, large-company CEOs, bank
+  economists) is a reasonable starting point for tracked accounts, if those
+  individuals are active posters on X.
 
 ## Acceptance Criteria
 
