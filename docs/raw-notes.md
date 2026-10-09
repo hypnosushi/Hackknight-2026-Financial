@@ -16,7 +16,7 @@ trends in real time.
   - Other potential data sources: videos / podcasts from certain people
   - Track tweets from certain people
   - Hashtag tracking
-  - "For you page" style feed
+  - "For you page" s3tyle feed
 - Use a classifier model (like Jev?) to process incoming data
 - Redis cache to store:
   - Recent stock trends
