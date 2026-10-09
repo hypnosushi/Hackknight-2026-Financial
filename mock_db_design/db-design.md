@@ -1,42 +1,46 @@
-# Database Table Design (first pass)
+# Database Table Design (updated for `new_specs/`)
 
 **Status:** Draft — for discussion, not a migration to run.
 
-## The core idea
+This replaces the earlier version of this doc, which was based on the old
+`specs/` direction (Redis cache, alerts, paper-trading, Jev
+guardrail/routing, etc.). None of that is in scope anymore — see
+[`new_specs/README.md`](../new_specs/README.md). This version is built only
+from what's actually in `new_specs/`.
+
+## The core idea (still holds)
 
 Anything we track — a company, a person, an industry — is an **entity**.
-Anything we ingest — a tweet, an article, an official release, a trade — is a
-**message**. A join table (`message_entities`) links the two, so these are
-all the same kind of lookup:
+Anything a content aggregator pulls in — a news article or a tweet — is a
+**message**. `message_entities` links the two:
 
 - "every message about NVDA" → entity `NVDA` → its messages
 - "every message from/about Trump" → entity `Trump` → its messages
 - "every message about Semiconductors" → entity `Semiconductors` → its messages
 
-```
-entity (NVDA)            ─┐
-entity (Trump)             ├──< message_entities >──  message (tweet / article / trade)
-entity (Semiconductors)   ─┘
-```
+What's new: prediction-market data (Polymarket/Kalshi) is **not** a message
+anymore — `new_specs/ingestion/README.md` is explicit that it's a separate
+time-series shape used for chart overlays, not classifiable text. So it gets
+its own tables (`markets` / `market_prices`) instead of living in `messages`.
 
-No Jev-specific data is stored anywhere (no model name, no guardrail, no
-block reason, no prompt) — only the raw message and which entities it
-relates to.
+We don't store anything from the Jev Classifier — no model, no prompt, no
+question/result output. Classification is a runtime step on top of
+`messages`, not persisted data.
 
 ---
 
 ## TL;DR — every table, just columns
 
 - `entities` — symbol, name, type, created_at
-- `messages` — id, source, source_native_id, author, text, url, timestamp, message_form, created_at
-- `message_entities` — message_id, entity_symbol, relevant, direction
-- `signals` — id, entity_symbol, type, score, related_entity_symbol, window, timestamp
-- `signal_source_messages` — signal_id, message_id
-- `entity_relationships` — id, entity_symbol, related_entity_symbol, relationship_type
-- `users` — id, email, display_name, created_at
-- `alert_subscriptions` — id, user_id, entity_symbol, condition, is_active
-- `positions` — id, user_id, ticker_or_crypto, status, quantity, avg_entry_price, realized_pnl
-- `position_fills` — id, position_id, side, amount, price, filled_at
+- `messages` — id, source, source_native_id, author, title, text, url, published_at, created_at
+- `message_entities` — message_id, entity_symbol
+- `entity_relationships` — id, entity_symbol, related_entity_symbol, relationship_type, weight, confidence, source, last_confirmed_at
+- `markets` — source, market_id, question, created_at
+- `market_prices` — id, source, market_id, price_or_odds, volume, timestamp
+- `market_entities` *(speculative)* — source, market_id, entity_symbol
+- `trending_cards` — id, entity_symbol, summary, generated_at
+- `trending_card_messages` — card_id, message_id
+- `trending_card_markets` — card_id, source, market_id
 
 ---
 
@@ -53,134 +57,172 @@ The thing being tracked — a company, a person, or an industry.
 
 ## 2. `messages`
 
-One row per ingested item — tweet, article, official release, or trade.
+One row per content-aggregator item — news article or tweet. (Official
+releases, wire news, and trade events are gone — not in `new_specs/`.)
 
 | column | type | notes |
 |---|---|---|
 | `id` | `UUID` (PK) | |
-| `source` | `TEXT` | `x`, `polymarket`, `kalshi`, `official-releases`, `wire-news` |
+| `source` | `TEXT` | `news` \| `twitter` |
 | `source_native_id` | `TEXT` | the platform's own id, used for de-dup |
-| `author` | `TEXT` | handle / wallet / username |
+| `author` | `TEXT` | outlet / handle |
+| `title` | `TEXT` | headline — news only |
 | `text` | `TEXT` | raw content |
 | `url` | `TEXT` | link back to the original |
-| `timestamp` | `TIMESTAMPTZ` | when it was actually published |
-| `message_form` | `TEXT` | e.g. `tweet`, `quote`, `press-release`, `meme` |
+| `published_at` | `TIMESTAMPTZ` | when it was actually published |
 | `created_at` | `TIMESTAMPTZ` | when we ingested it |
+
+**From:** `ingestion/README.md`'s shared content-item schema.
 
 ## 3. `message_entities`
 
-Links a message to every entity it mentions. This is the table that makes
-"company → messages" and "person → messages" lookups fast — look up the
-entity, pull its rows here, join back to `messages` for the raw content.
-
-| column | type | notes |
-|---|---|---|
-| `message_id` | `UUID` | FK → `messages.id` |
-| `entity_symbol` | `TEXT` | FK → `entities.symbol` |
-| `relevant` | `BOOLEAN` | is this message actually about this entity, not just a passing mention |
-| `direction` | `TEXT` | `bull` \| `bear` \| `neutral` — sentiment on this entity specifically (one message can be bullish on one entity and bearish on another) |
-
-PK: `(message_id, entity_symbol)`. Index on `(entity_symbol, message_id)` for
-fast per-entity lookups.
-
-## 4. `signals`
-
-A detected spike or relationship between entities.
-
-| column | type | notes |
-|---|---|---|
-| `id` | `UUID` (PK) | |
-| `entity_symbol` | `TEXT` | FK → `entities.symbol` |
-| `type` | `TEXT` | `spike` \| `relationship` |
-| `score` | `NUMERIC` | strength of the signal |
-| `related_entity_symbol` | `TEXT` | FK → `entities.symbol`, only set when `type = 'relationship'` |
-| `window` | `INTERVAL` | time window the signal was detected over |
-| `timestamp` | `TIMESTAMPTZ` | |
-
-## 5. `signal_source_messages`
-
-Which messages a signal was built from.
+Links a message to every entity it mentions — populated by each
+aggregator's own ticker/company-name match filter, per
+`news-aggregator.md` / `twitter-aggregator.md`. This is the table that
+makes "company → messages" and "person → messages" lookups fast.
 
 | column | type |
 |---|---|
-| `signal_id` | FK → `signals.id` |
 | `message_id` | FK → `messages.id` |
+| `entity_symbol` | FK → `entities.symbol` |
 
-PK: `(signal_id, message_id)`.
+PK: `(message_id, entity_symbol)`. Index on `(entity_symbol, message_id)`
+for fast per-entity lookups — this also backs `company-network.md`'s
+"minimum co-mention count" filter.
 
-## 6. `entity_relationships`
+## 4. `entity_relationships`
 
-Manually curated map of related entities (e.g. Tesla → its LIDAR supplier),
-used to propagate signals from one entity to another.
+The company-network graph's edges.
 
 | column | type | notes |
 |---|---|---|
 | `id` | `UUID` (PK) | |
 | `entity_symbol` | `TEXT` | FK → `entities.symbol` |
 | `related_entity_symbol` | `TEXT` | FK → `entities.symbol` |
-| `relationship_type` | `TEXT` | e.g. `supplier`, `customer`, `competitor` |
+| `relationship_type` | `TEXT` | e.g. `competitor`, `partner`, `dependency` |
+| `weight` | `NUMERIC` | |
+| `confidence` | `NUMERIC` | `company-network.md`'s "source confidence" filter |
+| `source` | `TEXT` | where the edge came from |
+| `last_confirmed_at` | `TIMESTAMPTZ` | backs the "edge recency" filter |
 
-## 7. `users`
+**From:** `company-network.md`'s draft edge shape. **Open question carried
+over from that spec:** how edges actually get built (industry vs. supply
+chain vs. production vs. distribution) is unresolved — this table shape
+works regardless of which method is picked.
 
-Not defined in any spec — added so alerts/paper-trading have something to
-attach to.
+## 5. `markets`
+
+Static metadata for a prediction market a user has selected/browsed.
 
 | column | type | notes |
 |---|---|---|
-| `id` | `UUID` (PK) | |
-| `email` | `TEXT` | |
-| `display_name` | `TEXT` | |
+| `source` | `TEXT` | `polymarket` \| `kalshi` |
+| `market_id` | `TEXT` | source-native market id |
+| `question` | `TEXT` | the market's question/topic |
 | `created_at` | `TIMESTAMPTZ` | |
 
-## 8. `alert_subscriptions`
+PK: `(source, market_id)`.
+
+## 6. `market_prices`
+
+Time-series price/odds data for a market — what gets overlaid on a stock
+chart in `display-charting.md`.
 
 | column | type | notes |
 |---|---|---|
 | `id` | `UUID` (PK) | |
-| `user_id` | `UUID` | FK → `users.id` |
-| `entity_symbol` | `TEXT` | FK → `entities.symbol` |
-| `condition` | `JSONB` | simple threshold, no fixed shape yet |
-| `is_active` | `BOOLEAN` | |
+| `source` | `TEXT` | FK (composite) → `markets.source` |
+| `market_id` | `TEXT` | FK (composite) → `markets.market_id` |
+| `price_or_odds` | `NUMERIC` | |
+| `volume` | `NUMERIC` | nullable |
+| `timestamp` | `TIMESTAMPTZ` | |
 
-## 9. `positions` + `position_fills`
+Index: `(source, market_id, timestamp)` — the access pattern `display-charting.md`
+actually needs (a market's price history over a range).
 
-Paper-trading. A position is opened/closed; fills are the individual buy/sell actions against it.
+**From:** `polymarket.md` / `kalshi.md`'s shared draft market data-point
+shape.
 
-**`positions`**
+## 7. `market_entities` *(speculative)*
+
+Links a market to the compan(ies) it affects. Only build this once the open
+question in `polymarket.md` is resolved — "how does a user/system find the
+right market for a company: manual selection, or an automated link via
+company-network?"
+
+| column | type |
+|---|---|
+| `source` | FK (composite) → `markets.source` |
+| `market_id` | FK (composite) → `markets.market_id` |
+| `entity_symbol` | FK → `entities.symbol` |
+
+PK: `(source, market_id, entity_symbol)`.
+
+## 8. `trending_cards` + junctions
+
+A generated summary card for an entity, with links back to what it was
+built from.
+
+**`trending_cards`**
 
 | column | type | notes |
 |---|---|---|
 | `id` | `UUID` (PK) | |
-| `user_id` | `UUID` | FK → `users.id` |
-| `ticker_or_crypto` | `TEXT` | |
-| `status` | `TEXT` | `open` \| `closed` |
-| `quantity` | `NUMERIC` | |
-| `avg_entry_price` | `NUMERIC` | |
-| `realized_pnl` | `NUMERIC` | |
+| `entity_symbol` | `TEXT` | FK → `entities.symbol` — company or industry |
+| `summary` | `TEXT` | generated text |
+| `generated_at` | `TIMESTAMPTZ` | |
 
-**`position_fills`**
+**`trending_card_messages`** — PK `(card_id, message_id)`, FKs to
+`trending_cards.id` / `messages.id`.
 
-| column | type | notes |
-|---|---|---|
-| `id` | `UUID` (PK) | |
-| `position_id` | `UUID` | FK → `positions.id` |
-| `side` | `TEXT` | `buy` \| `sell` |
-| `amount` | `NUMERIC` | |
-| `price` | `NUMERIC` | |
-| `filled_at` | `TIMESTAMPTZ` | |
+**`trending_card_markets`** — PK `(card_id, source, market_id)`, FKs to
+`trending_cards.id` / `markets.(source, market_id)`.
+
+**From:** `trending-cards.md`'s draft shape
+(`{entity, summary, source_item_ids, related_market_ids, generated_at}`).
+
+---
+
+## News Graphing — no new table
+
+`news-graphing.md`'s markers (`{entity, item_id, timestamp, label}`) don't
+need their own table — they're a query over what already exists:
+
+```sql
+SELECT m.id, m.published_at, m.title
+FROM message_entities me
+JOIN messages m ON m.id = me.message_id
+WHERE me.entity_symbol = $1
+  AND m.published_at BETWEEN $2 AND $3;
+```
+
+Each row is a marker to plot on `display-charting.md`'s chart at
+`published_at`, labeled from `m.title`.
 
 ---
 
 ## Not building yet
 
-- **Market-level data (Polymarket/Kalshi odds)** — only needed if we go beyond individual trades; cut for now.
-- **Solana wallets** — no wallet/payment pattern picked yet.
-- **Self-hosted price history** — paper-trading P&L will read prices from an external feed (e.g. Alpaca) instead of storing our own.
-- **Notification delivery log** — no delivery channel decided yet.
+- **Users, alerts, paper-trading, Solana wallets** — none of these are in
+  `new_specs/`; the old `specs/` versions of them are explicitly not
+  carried forward (see `new_specs/README.md`).
+- **Stock price history** — `display-charting.md` reads this from an
+  external price feed (source TBD); we don't store our own copy.
+- **A formal `signals`/spike-detection table** — `new_specs/` doesn't
+  define a spike-detection spec the way the old `classifier-signal-detection.md`
+  did; `trending-cards.md` references "spikes" only informally. Revisit if
+  that gets its own spec.
+- **A cache/storage layer spec equivalent to the old `redis-cache-storage.md`**
+  — not re-specified yet in `new_specs/`.
+- **Storing Jev classification output** — not needed; classification runs
+  at read/query time over `messages`, nothing from it is persisted.
 
 ## Known open questions (not resolved here)
 
-- What counts as a "spike" — fixed threshold vs. something smarter.
-- How `entity_relationships` gets populated — hardcoded for the demo, or a real data source.
-- Which sources ship for MVP (X / Polymarket / Kalshi).
-- Alpaca vs. Solana for paper trading.
+- How is `entity_relationships` actually populated — by industry, supply
+  chain, production, or distribution? (`company-network.md`)
+- How does a market in `markets` get linked to the company/companies it
+  affects — manual vs. automated via company-network? (`polymarket.md`)
+- What threshold makes a message "relevant" enough to be a News Graphing
+  marker? (`news-graphing.md`)
+- Which stock price data source backs `display-charting.md`?
