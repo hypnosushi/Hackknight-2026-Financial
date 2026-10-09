@@ -16,6 +16,7 @@ sharpens. The original unstructured brainstorm is preserved at
 | Spec | Status |
 |---|---|
 | [ingestion/](./ingestion/README.md) — X, Reddit, Polymarket, Kalshi, Official Releases (RSS), Wire News (NewsAPI) | Draft |
+| [jev-classification.md](./jev-classification.md) — per-item guardrail/labeling/routing/scoring | Draft |
 | [classifier-signal-detection.md](./classifier-signal-detection.md) | Draft |
 | [redis-cache-storage.md](./redis-cache-storage.md) | Draft |
 | [search-rag.md](./search-rag.md) | Draft |
@@ -29,6 +30,9 @@ sharpens. The original unstructured brainstorm is preserved at
 ```
 ingestion/{x,reddit,polymarket,kalshi,official-releases,wire-news}
         │  (normalized events)
+        ▼
+jev-classification   (guardrail / event-type / route / score / actionable)
+        │  (gated + labeled events)
         ▼
 redis-cache-storage  ◄──────────────┐
         │                           │
@@ -49,7 +53,10 @@ paper-trading / solana-integration  (acting on signals — separate track)
 - **MVP source scope** — which of X / Reddit / Polymarket / Kalshi are actually
   built for the hackathon vs. cut? (See each ingestion spec's own feasibility
   notes — Reddit in particular needs an API-access check first.)
-- **Classifier model** — brainstorm says "like Jev," needs a concrete decision.
+- **Classifier model split** — Jev 1.13 (fast, per-item gating/labeling — see
+  [[jev-classification]]) vs. FinBERT (financially-tuned, slower — candidate
+  for the heavier spike/relationship work in [[classifier-signal-detection]]).
+  Final split still open.
 - **Solana vs. Alpaca** for paper trading — or both?
 - **MCP server scope** for the hackathon timebox — search + alerts only, or more?
 

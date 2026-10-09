@@ -10,12 +10,21 @@ layer turns that stream into actual signals: ticker/entity extraction, "everyone
 is suddenly talking about X" spike detection, and cross-entity relationship
 inference (e.g. Tesla self-driving news -> its LIDAR supplier).
 
+Events arriving here have likely already passed through [[jev-classification]]
+(guardrail-blocked junk removed, event-type/score/route already attached) —
+this layer doesn't need to re-filter duplicates/opinion pieces, it works on
+already-triaged events.
+
 ## Goals
 
 - Classify/tag incoming events by entity (ticker/company).
 - Detect volume spikes per entity across sources ("general consensus" signal).
 - Infer simple cross-entity relationships (e.g. supplier/customer) to surface
   second-order signals.
+- Aggregate a per-entity sentiment score, counting only events
+  [[jev-classification]] has flagged as actually relevant to that entity
+  (its per-entity `entity_relevance` output) — not just events that mention
+  the entity's ticker in passing.
 
 ## Non-Goals
 
@@ -39,8 +48,14 @@ inference (e.g. Tesla self-driving news -> its LIDAR supplier).
    configurable threshold relative to baseline.
 3. Maintain a simple, likely manually-curated, map of entity relationships
    (company -> suppliers/customers) to propagate signals.
-4. Pick/evaluate a classifier model (brainstorm mentions "something like Jev" —
-   needs a concrete decision).
+4. Pick/evaluate a model for the spike/relationship inference itself. Two
+   candidates under consideration:
+   - **TypeSafe Jev 1.13** — fast, already doing per-item gating/labeling in
+     [[jev-classification]]; reusing it here avoids a second model in the
+     pipeline, but it's not financially-tuned.
+   - **FinBERT** — better tuned for financial text classification, but
+     slower; likely only viable here (post-guardrail, lower volume) rather
+     than on every raw ingested item.
 
 ## Design / Approach
 
@@ -69,13 +84,17 @@ Signal record (draft shape):
 
 - All [[ingestion/README|ingestion sources]] — this is the primary consumer of
   normalized events.
+- [[jev-classification]] — upstream guardrail/labeling layer; this spec
+  consumes its output rather than raw ingestion events.
 - [[redis-cache-storage]] — reads events from and writes signals back to it.
 - [[alerts-pubsub]] and [[search-rag]] — consumers of flagged signals.
 
 ## Open Questions
 
-- What specific classifier/model actually gets used (the brainstorm's "like
-  Jev" reference needs to resolve to a real choice)?
+- Jev vs. FinBERT for this layer's spike/relationship inference (see
+  Functional Requirements above) — or does Jev's output from
+  [[jev-classification]] (event_type/score) already give enough signal that
+  this layer only needs the rolling-window math, no second model at all?
 - How is the relationship map built — hardcoded for the demo, or sourced from
   somewhere?
 - What counts as a "spike" — fixed threshold, z-score vs. rolling baseline,
