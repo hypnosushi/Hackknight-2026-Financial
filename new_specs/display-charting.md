@@ -43,14 +43,14 @@ correlation.
 
 ## Design / Approach
 
-Left light. Needs a stock price data source (not yet specified in the
-source doc — SEC EDGAR is named for filings, not live/historical price
-data, so a separate price feed is likely needed).
+Left light. Stock price source resolved: [[ingestion/alpaca]] (free Basic
+plan — documented API, 15-minute delay on recent data accepted as a
+tradeoff).
 
 ## Interfaces / Data Model
 
 Consumes:
-- Stock price series (source TBD).
+- Stock price series from [[ingestion/alpaca]].
 - Market price/odds series from [[ingestion/polymarket]] /
   [[ingestion/kalshi]] (see their draft time-series shape).
 
@@ -59,17 +59,21 @@ chart-specific caching is added later.
 
 ## Dependencies
 
-- A stock price data source (TBD).
+- [[ingestion/alpaca]] — stock price series.
 - [[ingestion/polymarket]] / [[ingestion/kalshi]] — market overlay data.
 - [[news-graphing]] — layers event markers on top of this chart.
 
 ## Open Questions
 
-- Which stock price data source/API?
 - How does a user pick "the right" market to overlay for a given
   ticker — manually, or via [[company-network]] once that exists?
 - Does this need real-time updates, or is a periodic refresh enough for a
   demo?
+
+### Resolved
+
+- Stock price source: [[ingestion/alpaca]] (free Basic plan, 15-minute
+  delay on recent data accepted).
 
 ## Acceptance Criteria
 
