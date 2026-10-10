@@ -1,6 +1,8 @@
 # Alert detector
 
-Watches the live Kalshi data that the ingestion worker writes to Postgres.
+Watches the live data that the ingestion workers (Kalshi, Polymarket, Polymarket US)
+write to Postgres. One detector covers every source: markets are keyed by
+`(source, market_id)`, and grouping and cooldowns never cross sources.
 When a market move looks real, it writes a row to `alerts`. A separate LLM
 enricher (not built yet) picks up each alert and researches it using tweets,
 news and the graph DB.
@@ -20,6 +22,7 @@ From the repo root:
 ```
 uv run python -m alert_detector            # runs until Ctrl+C
 uv run python -m alert_detector --explain  # one evaluation, prints why, writes nothing
+uv run python -m alert_detector --explain --source polymarket  # same, one source only
 ```
 
 How it runs:
@@ -76,7 +79,8 @@ Other rules:
 | Column | Meaning |
 |---|---|
 | `status` | `pending` → `processing` → `done` / `failed` (the enricher updates it) |
-| `market_id`, `event_ticker`, `series` | which market (the strongest in its event) |
+| `source` | `kalshi`, `polymarket` or `polymarket_us` |
+| `market_id`, `event_id`, `series_id` | which market (the strongest in its event) |
 | `direction` | `yes_up` or `yes_down` |
 | `reasons` | which signals fired: `price_move`, `volume_burst`, `whale`, `imbalance` |
 | `score` | ranking. Combines z (capped at 3), volume ratio ÷ 5 (capped at 3), +1 for a whale, + imbalance |
@@ -85,8 +89,8 @@ Other rules:
 | `window_notional`, `volume_ratio` | $ traded in the window, and × normal |
 | `imbalance`, `imbalance_side` | 0–1 one-sidedness, and toward which side |
 | `whale_notional`, `whale_side`, `is_block_trade` | the whale order, if one fired |
-| `summary` | one plain sentence for the LLM |
-| `context` (jsonb) | `market` metadata, `price_path` (minute mids, last 30 min), `top_trades` (5 largest orders), `related_markets`, `thresholds` |
+| `summary` | one plain sentence for the LLM, starting with the platform, e.g. `[Polymarket] ...` |
+| `context` (jsonb) | `market` metadata (incl. `source` and `url`), `price_path` (minute mids, last 30 min), `top_trades` (5 largest orders), `related_markets`, `thresholds` |
 
 ### How the enricher claims an alert
 
@@ -109,6 +113,7 @@ kind of alert. It then reports whether the running detector caught them.
 ```
 uv run python -m alert_detector            # terminal 1, default thresholds
 uv run python -m alert_detector.demo       # terminal 2, takes ~90 s
+uv run python -m alert_detector.demo --source polymarket   # same, as Polymarket markets
 uv run python -m alert_detector.demo --cleanup   # delete all demo data afterwards
 ```
 
@@ -121,7 +126,8 @@ uv run python -m alert_detector.demo --cleanup   # delete all demo data afterwar
 | CHURN | One-sided buying, no price or volume change | no alert |
 | CLOSING | Price jump in a market closing in 10 min | no alert |
 
-The demo markets use the `KXDEMO` series, which the ingestion worker ignores.
+The demo markets use the `KXDEMO` series. The ingestion workers never follow or
+close markets in it, so the fake markets stay active until `--cleanup`.
 The script waits 65 s after creating them because the detector reloads market
 metadata once a minute. Run only one detector at a time, or each instance
 writes its own copy of every alert.

@@ -3,6 +3,7 @@
 Start the detector first, then in a second terminal:
 
     python -m alert_detector.demo            # insert scenarios, then report which ones alerted
+    python -m alert_detector.demo --source polymarket   # same, as Polymarket markets
     python -m alert_detector.demo --cleanup  # delete all demo markets, rows and alerts
 
 Each run uses fresh tickers (KXDEMO-<time>-<scenario>), so you can rerun it
@@ -23,9 +24,9 @@ from dotenv import load_dotenv
 from sqlalchemy import delete, insert, select
 
 from alert_detector import db
+from ingestion.common.db import DEMO_SERIES as SERIES  # the workers never close markets in this series
 from models import Alert, Market, MarketPrice, MarketTrade
 
-SERIES = "KXDEMO"
 RELOAD_WAIT_S = 65   # the detector reloads market metadata every 60 s
 REPORT_WAIT_S = 20   # how long to wait for alerts after inserting the trigger rows
 HISTORY_MIN = 150    # matches the 2.5 h baseline
@@ -82,7 +83,7 @@ def _trade_row(market_id: str, t: float, dollars: float, side: str, n: int) -> d
             "taker_side": side, "is_block_trade": False}
 
 
-def build_rows(s: Scenario, market_id: str, now: float) -> tuple[list[dict], list[dict]]:
+def build_rows(s: Scenario, source: str, market_id: str, now: float) -> tuple[list[dict], list[dict]]:
     start = now - HISTORY_MIN * 60
     prices = [_price_row(market_id, t, s.base_mid) for t in range(int(start), int(now - 90), 60)]
     if s.jump_to is not None:
@@ -96,19 +97,21 @@ def build_rows(s: Scenario, market_id: str, now: float) -> tuple[list[dict], lis
               for i in range(count)]
     trades += [_trade_row(market_id, now - ago, d, side, count + i)
                for i, (ago, d, side) in enumerate(s.window_trades)]
+    for row in prices + trades:
+        row["source"] = source
     return prices, trades
 
 
-async def run(engine) -> None:
+async def run(engine, source: str) -> None:
     run_id = time.strftime("%H%M%S")
     plan = [(s, f"{SERIES}-{run_id}-{s.key}") for s in scenarios()]
 
     now = time.time()
     async with engine.begin() as conn:
         await conn.execute(insert(Market), [{
-            "source": "kalshi", "market_id": market_id, "title": f"DEMO: {s.title}", "yes_sub_title": s.key,
-            "rules_primary": "Fake market inserted by alert_detector.demo.", "event_ticker": market_id,
-            "event_title": f"Demo event {s.key}", "series": SERIES, "series_title": "Alert detector demo",
+            "source": source, "market_id": market_id, "title": f"DEMO: {s.title}", "outcome_label": s.key,
+            "rules_primary": "Fake market inserted by alert_detector.demo.", "event_id": market_id,
+            "event_title": f"Demo event {s.key}", "series_id": SERIES, "series_title": "Alert detector demo",
             "category": "Demo", "tags": ["demo"], "status": "active", "close_time": _dt(now + s.close_in_s),
         } for s, market_id in plan])
     print(f"Inserted {len(plan)} demo markets. Waiting {RELOAD_WAIT_S}s for the detector to load them...")
@@ -117,7 +120,7 @@ async def run(engine) -> None:
     now = time.time()
     async with engine.begin() as conn:
         for s, market_id in plan:
-            prices, trades = build_rows(s, market_id, now)
+            prices, trades = build_rows(s, source, market_id, now)
             await conn.execute(insert(MarketPrice), prices)
             if trades:
                 await conn.execute(insert(MarketTrade), trades)
@@ -129,7 +132,8 @@ async def run(engine) -> None:
     while time.time() < deadline:
         await asyncio.sleep(2)
         async with engine.connect() as conn:
-            rows = await conn.execute(select(Alert.market_id, Alert.reasons).where(Alert.market_id.in_(ids)))
+            rows = await conn.execute(select(Alert.market_id, Alert.reasons)
+                                      .where(Alert.source == source, Alert.market_id.in_(ids)))
             found = {r.market_id: list(r.reasons) for r in rows}
         if len(found) >= sum(1 for s, _ in plan if s.expect):
             break
@@ -145,7 +149,7 @@ async def run(engine) -> None:
         print(f"      {s.title}")
     print("\nAll scenarios behaved as expected." if ok_all else
           "\nSome scenarios differ. Is `python -m alert_detector` running with default thresholds?")
-    print("See them with: SELECT id, reasons, summary FROM alerts WHERE series = 'KXDEMO' ORDER BY id;")
+    print("See them with: SELECT id, reasons, summary FROM alerts WHERE series_id = 'KXDEMO' ORDER BY id;")
 
 
 async def cleanup(engine) -> None:
@@ -156,14 +160,14 @@ async def cleanup(engine) -> None:
             print(f"Deleted {result.rowcount} rows from {model.__tablename__}")
 
 
-async def main(do_cleanup: bool) -> None:
+async def main(do_cleanup: bool, source: str) -> None:
     load_dotenv()
     url = os.environ.get("DATABASE_URL")
     if not url:
         sys.exit("Set DATABASE_URL in .env")
     engine = await db.connect(url)
     try:
-        await (cleanup(engine) if do_cleanup else run(engine))
+        await (cleanup(engine) if do_cleanup else run(engine, source))
     finally:
         await engine.dispose()
 
@@ -171,4 +175,7 @@ async def main(do_cleanup: bool) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog="python -m alert_detector.demo")
     parser.add_argument("--cleanup", action="store_true", help="delete all demo markets, rows and alerts")
-    asyncio.run(main(parser.parse_args().cleanup))
+    parser.add_argument("--source", choices=["kalshi", "polymarket", "polymarket_us"], default="kalshi",
+                        help="which source the fake markets belong to (default kalshi)")
+    args = parser.parse_args()
+    asyncio.run(main(args.cleanup, args.source))

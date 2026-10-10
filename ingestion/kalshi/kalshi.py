@@ -85,15 +85,16 @@ async def discover_series(client: httpx.AsyncClient, series: str) -> list[dict]:
         rows.append({
             "market_id": m["ticker"],
             "title": m.get("title"),
-            "yes_sub_title": m.get("yes_sub_title"),
+            "outcome_label": m.get("yes_sub_title"),
             "rules_primary": m.get("rules_primary"),
-            "event_ticker": m.get("event_ticker"),
+            "event_id": m.get("event_ticker"),
             "event_title": event.get("title"),
-            "series": series,
+            "series_id": series,
             "series_title": info.get("title"),
             "category": event.get("category") or info.get("category"),
             "tags": info.get("tags") or [],
             "close_time": _parse_time(m.get("close_time")),
+            "url": f"https://kalshi.com/markets/{series.lower()}",
         })
     return rows
 
@@ -104,7 +105,7 @@ def _dec(value) -> Decimal | None:
 
 
 def parse_ticker(msg: dict, snapshot: bool) -> tuple | None:
-    """Ticker msg -> market_prices row (see db.PRICE_COLUMNS), or None if unusable."""
+    """Ticker msg -> market_prices row (see ingestion.common.db.PRICE_COLUMNS), or None if unusable."""
     try:
         return (
             "kalshi",
@@ -124,7 +125,7 @@ def parse_ticker(msg: dict, snapshot: bool) -> tuple | None:
 
 
 def parse_trade(msg: dict) -> tuple | None:
-    """Trade msg -> market_trades row (see db.TRADE_COLUMNS), or None if unusable."""
+    """Trade msg -> market_trades row (see ingestion.common.db.TRADE_COLUMNS), or None if unusable."""
     try:
         # taker_outcome_side replaces the deprecated taker_side; accept either.
         taker_side = msg.get("taker_outcome_side") or msg["taker_side"]

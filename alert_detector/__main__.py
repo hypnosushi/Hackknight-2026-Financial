@@ -1,4 +1,4 @@
-"""Alert detector. Run from the repo root: uv run python -m alert_detector [--explain]"""
+"""Alert detector. Run from the repo root: uv run python -m alert_detector [--explain [--source S]]"""
 
 import argparse
 import asyncio
@@ -7,6 +7,7 @@ import os
 import signal
 import sys
 import time
+from collections import Counter
 
 from dotenv import load_dotenv
 from sqlalchemy.exc import SQLAlchemyError
@@ -24,7 +25,7 @@ EXPLAIN_TOP = 15
 ACTIVE_RECENTLY_S = 600
 
 
-async def main(explain: bool) -> None:
+async def main(explain: bool, source: str | None = None) -> None:
     load_dotenv()
     cfg = config.load()
     database_url = os.environ.get("DATABASE_URL")
@@ -41,7 +42,7 @@ async def main(explain: bool) -> None:
     detector.markets = await db.load_markets(engine)
 
     if explain:
-        print_explain(detector, time.time())
+        print_explain(detector, time.time(), source)
         await engine.dispose()
         return
 
@@ -106,22 +107,31 @@ async def main(explain: bool) -> None:
 
 
 # --- --explain -------------------------------------------------------------------
-def print_explain(detector: Detector, now: float) -> None:
-    """One evaluation of recently active markets; prints why each signal did or didn't fire."""
+def print_explain(detector: Detector, now: float, source: str | None = None) -> None:
+    """One evaluation of recently active markets (optionally one source); prints why each signal
+    did or didn't fire."""
     state = detector.state
     if now - state.latest_ts > detector.cfg.stale_s:
         print(f"WARNING: newest data is {now - state.latest_ts:.0f}s old; ingestion looks down.\n")
-    evals = [detector.evaluate(m, now) for m, buf in state.markets.items()
+    evals = [detector.evaluate(key, now) for key, buf in state.markets.items()
              if buf.last_seen >= now - ACTIVE_RECENTLY_S]
-    evals = sorted((e for e in evals if e), key=lambda e: e.score, reverse=True)
-    print(f"{len(evals)} markets active in the last {ACTIVE_RECENTLY_S // 60} min; "
-          f"top {min(EXPLAIN_TOP, len(evals))} by score (nothing is written):\n")
+    evals = [e for e in evals if e]
+    per_source = ", ".join(f"{s} {n}" for s, n in sorted(Counter(e.source for e in evals).items()))
+    if source:
+        evals = [e for e in evals if e.source == source]
+    evals.sort(key=lambda e: e.score, reverse=True)
+    shown = f"top {min(EXPLAIN_TOP, len(evals))}" + (f" {source}" if source else "")
+    print(f"Markets active in the last {ACTIVE_RECENTLY_S // 60} min: {per_source or 'none'}. "
+          f"Showing the {shown} by score (nothing is written):\n")
     for e in evals[:EXPLAIN_TOP]:
         print(format_evaluation(e, detector.cfg))
 
 
 def format_evaluation(e: Evaluation, cfg) -> str:
-    head = f"{e.market_id}  score {e.score:.2f}"
+    name = e.meta.get("title") or ""
+    if e.meta.get("outcome_label"):
+        name += f" ({e.meta['outcome_label']})"
+    head = f"[{e.source}] {e.market_id}  score {e.score:.2f}\n  {name[:110]}\n"
     if e.skip:
         return f"{head}  SKIPPED: {e.skip}\n"
     pm, vb, wh, im = e.price, e.volume, e.whale, e.imbalance
@@ -153,6 +163,10 @@ def format_evaluation(e: Evaluation, cfg) -> str:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog="python -m alert_detector")
     parser.add_argument("--explain", action="store_true", help="evaluate once, print signal details, write nothing")
+    parser.add_argument("--source", choices=["kalshi", "polymarket", "polymarket_us"],
+                        help="with --explain: only show markets from this source")
     args = parser.parse_args()
+    if args.source and not args.explain:
+        parser.error("--source only works with --explain; the detector always watches every source")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    asyncio.run(main(args.explain))
+    asyncio.run(main(args.explain, args.source))

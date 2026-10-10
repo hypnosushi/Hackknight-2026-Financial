@@ -8,12 +8,12 @@ from models.base import Base
 
 
 class MarketTrade(Base):
-    """One row per executed Kalshi trade (from the trade channel). Kept for 3 hours."""
+    """One row per executed trade, from the YES point of view. Kept for 3 hours."""
 
     __tablename__ = "market_trades"
     __table_args__ = (
         ForeignKeyConstraint(["source", "market_id"], ["markets.source", "markets.market_id"]),
-        Index("market_trades_market_time", "market_id", "timestamp"),
+        Index("market_trades_market_time", "source", "market_id", "timestamp"),
         Index("market_trades_time", "timestamp"),
     )
 

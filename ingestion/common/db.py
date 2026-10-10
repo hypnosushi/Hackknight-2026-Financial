@@ -1,4 +1,4 @@
-"""Postgres via SQLAlchemy: table setup, market upserts, batched price/trade writer, retention."""
+"""Postgres via SQLAlchemy, shared by every source: setup, market upserts, batched writer, retention."""
 
 import logging
 from collections import deque
@@ -14,12 +14,14 @@ log = logging.getLogger(__name__)
 
 MAX_QUEUE = 100_000  # per table
 UPSERT_CHUNK = 1000  # keeps each statement under Postgres' bind-parameter limit
+RETENTION = "3 hours"
+DEMO_SERIES = "KXDEMO"  # fake markets from alert_detector.demo; workers never close them
 PRICE_COLUMNS = ["source", "market_id", "timestamp", "price_or_odds", "yes_bid", "yes_ask",
                  "yes_bid_size", "yes_ask_size", "volume", "open_interest", "snapshot"]
 TRADE_COLUMNS = ["source", "market_id", "timestamp", "trade_id", "yes_price", "count",
                  "taker_side", "is_block_trade"]
-MARKET_FIELDS = ["title", "yes_sub_title", "rules_primary", "event_ticker", "event_title",
-                 "series", "series_title", "category", "tags", "close_time"]
+MARKET_FIELDS = ["title", "outcome_label", "rules_primary", "event_id", "event_title",
+                 "series_id", "series_title", "category", "tags", "close_time", "url"]
 
 
 def _async_url(url: str) -> str:
@@ -30,21 +32,25 @@ def _async_url(url: str) -> str:
     return url
 
 
+def make_engine(url: str) -> AsyncEngine:
+    return create_async_engine(_async_url(url), pool_size=3, max_overflow=0,
+                               connect_args={"timeout": 10})
+
+
 async def connect(url: str) -> AsyncEngine:
     """Create the engine and the tables (no migrations: tables come from the models)."""
-    engine = create_async_engine(_async_url(url), pool_size=3, max_overflow=0,
-                                 connect_args={"timeout": 10})
+    engine = make_engine(url)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     return engine
 
 
-async def upsert_markets(engine: AsyncEngine, rows: list[dict]) -> None:
+async def upsert_markets(engine: AsyncEngine, source: str, rows: list[dict]) -> None:
     async with engine.begin() as conn:
         for i in range(0, len(rows), UPSERT_CHUNK):
             stmt = pg_insert(Market).values([
-                {"source": "kalshi", "market_id": r["market_id"], "status": "active",
-                 **{f: r[f] for f in MARKET_FIELDS}}
+                {"source": source, "market_id": r["market_id"], "status": "active",
+                 **{f: r.get(f) for f in MARKET_FIELDS}}
                 for r in rows[i:i + UPSERT_CHUNK]
             ])
             stmt = stmt.on_conflict_do_update(
@@ -55,22 +61,29 @@ async def upsert_markets(engine: AsyncEngine, rows: list[dict]) -> None:
             await conn.execute(stmt)
 
 
-async def close_missing(engine: AsyncEngine, series: list[str], open_ids: list[str]) -> None:
-    """Markets of these series that are no longer in Kalshi's open list -> closed."""
+async def close_missing(engine: AsyncEngine, source: str, group_ids: list[str] | None,
+                        open_ids: list[str]) -> None:
+    """Active markets of this source (and these series, if given) no longer in the open list -> closed."""
+    conditions = [Market.source == source, Market.status == "active", Market.market_id.not_in(open_ids),
+                  Market.series_id.is_distinct_from(DEMO_SERIES)]
+    if group_ids is not None:
+        conditions.append(Market.series_id.in_(group_ids))
     async with engine.begin() as conn:
-        await conn.execute(
-            update(Market)
-            .where(Market.source == "kalshi", Market.status == "active",
-                   Market.series.in_(series), Market.market_id.not_in(open_ids))
-            .values(status="closed", updated_at=func.now())
-        )
+        await conn.execute(update(Market).where(*conditions).values(status="closed", updated_at=func.now()))
+
+
+async def close_markets(engine: AsyncEngine, source: str, market_ids: list[str]) -> None:
+    async with engine.begin() as conn:
+        await conn.execute(update(Market)
+                           .where(Market.source == source, Market.market_id.in_(market_ids))
+                           .values(status="closed", updated_at=func.now()))
 
 
 async def delete_old_rows(engine: AsyncEngine) -> None:
     async with engine.begin() as conn:
         for model in (MarketPrice, MarketTrade):
             await conn.execute(delete(model).where(
-                model.timestamp < text("now() - interval '3 hours'")))
+                model.timestamp < text(f"now() - interval '{RETENTION}'")))
 
 
 class _Queue:
@@ -103,7 +116,7 @@ class _Queue:
 
 
 class RowWriter:
-    """Queues ticker and trade rows in memory and inserts them in batches."""
+    """Queues price and trade rows in memory and inserts them in batches."""
 
     def __init__(self, engine: AsyncEngine):
         self.engine = engine

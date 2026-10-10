@@ -3,6 +3,7 @@ from itertools import count
 from types import SimpleNamespace
 
 import pytest
+from decimal import Decimal
 
 from alert_detector import signals as sig
 from alert_detector.config import Config
@@ -18,8 +19,8 @@ def _dt(t):
     return datetime.fromtimestamp(t, tz=timezone.utc)
 
 
-def price_row(market_id, t, mid, snapshot=False, size=10):
-    return SimpleNamespace(id=next(_ids), market_id=market_id, timestamp=_dt(t),
+def price_row(market_id, t, mid, snapshot=False, size=10, source="kalshi"):
+    return SimpleNamespace(id=next(_ids), source=source, market_id=market_id, timestamp=_dt(t),
                            yes_bid=mid - 0.01, yes_ask=mid + 0.01,
                            yes_bid_size=size, yes_ask_size=size, snapshot=snapshot)
 
@@ -33,17 +34,26 @@ def trade(t, notional, side="yes", block=False):
     return sig.Trade(t, notional, side, 0.5, block)
 
 
-def setup_detector(moves: dict[str, float], event="EV", close_in=86400, now=NOW):
-    """Markets with a flat 0.50 history that jump to `moves[market]` 30 s before now."""
+def setup_detector(moves: dict, event="EV", close_in=86400, now=NOW):
+    """Markets with a flat 0.50 history that jump to `moves[market]` 30 s before now.
+
+    Keys of `moves` are a market id (source kalshi) or a (source, market_id) pair.
+    """
     state = State(CFG)
     detector = Detector(CFG, state)
-    for market_id, move_to in moves.items():
+    for key, move_to in moves.items():
+        source, market_id = key if isinstance(key, tuple) else ("kalshi", key)
         for t, mid in flat_quotes(until=now - 60):
-            state.add_price(price_row(market_id, t, mid))
-        state.add_price(price_row(market_id, now - 30, move_to))
-        detector.markets[market_id] = {"market_id": market_id, "event_ticker": event, "title": "Title",
-                                       "yes_sub_title": market_id, "close_time": _dt(now + close_in)}
+            state.add_price(price_row(market_id, t, mid, source=source))
+        state.add_price(price_row(market_id, now - 30, move_to, source=source))
+        detector.markets[(source, market_id)] = {
+            "source": source, "market_id": market_id, "event_id": event, "title": "Title",
+            "outcome_label": market_id, "close_time": _dt(now + close_in)}
     return state, detector
+
+
+def K(market_id, source="kalshi"):
+    return (source, market_id)
 
 
 # --- Quotes ---------------------------------------------------------------------
@@ -129,7 +139,7 @@ def test_imbalance_needs_min_notional_and_orders():
 # --- Detector -------------------------------------------------------------------------
 def test_imbalance_alone_does_not_escalate():
     detector = Detector(CFG, State(CFG))
-    e = Evaluation("M", {})
+    e = Evaluation("kalshi", "M", {})
     e.imbalance = sig.Imbalance(yes_notional=1000, orders=10, value=1.0, side="yes")
     detector._escalate(e)
     assert not e.candidate and e.reasons == []
@@ -137,32 +147,32 @@ def test_imbalance_alone_does_not_escalate():
 
 def test_near_close_market_excluded():
     _, detector = setup_detector({"A": 0.60}, close_in=5 * 60)
-    assert detector.evaluate("A", NOW).skip == "closing soon"
-    assert detector.process({"A"}, NOW) == []
+    assert detector.evaluate(K("A"), NOW).skip == "closing soon"
+    assert detector.process({K("A")}, NOW) == []
 
 
 def test_strikes_grouped_by_event_with_related_markets():
     _, detector = setup_detector({"A": 0.60, "B": 0.55})
-    alerts = detector.process({"B"}, NOW)  # only B got a new row; A is found through the event
+    alerts = detector.process({K("B")}, NOW)  # only B got a new row; A is found through the event
     assert len(alerts) == 1
     alert = alerts[0]
-    assert alert["market_id"] == "A"  # the stronger move leads
+    assert alert["market_id"] == "A" and alert["source"] == "kalshi"  # the stronger move leads
     assert alert["reasons"] == ["price_move"] and alert["direction"] == "yes_up"
     assert [r["market_id"] for r in alert["context"]["related_markets"]] == ["B"]
-    assert alert["summary"] == "Title (A): YES rose from 0.500 to 0.600 (+10.0 pts, z=10.0) in 5 min."
+    assert alert["summary"] == "[Kalshi] Title (A): YES rose from 0.500 to 0.600 (+10.0 pts, z=10.0) in 5 min."
 
 
 def test_cooldown_blocks_repeats_but_lets_stronger_move_through():
     state, detector = setup_detector({"A": 0.55})
-    assert len(detector.process({"A"}, NOW)) == 1           # z=5, score ~1.67
-    assert detector.process({"A"}, NOW + 30) == []          # same move again: blocked
+    assert len(detector.process({K("A")}, NOW)) == 1        # z=5, score ~1.67
+    assert detector.process({K("A")}, NOW + 30) == []       # same move again: blocked
     state.add_price(price_row("A", NOW + 50, 0.70))         # z=20, score capped at 3 >= 1.5 x 1.67
-    assert len(detector.process({"A"}, NOW + 60)) == 1
+    assert len(detector.process({K("A")}, NOW + 60)) == 1
 
 
 def test_stale_ingestion_writes_no_alerts():
     _, detector = setup_detector({"A": 0.60})
-    assert detector.process({"A"}, NOW + CFG.stale_s + 60) == []
+    assert detector.process({K("A")}, NOW + CFG.stale_s + 60) == []
     assert detector.stale
 
 
@@ -172,3 +182,17 @@ def test_env_thresholds_accept_decimals(monkeypatch):
     monkeypatch.setenv("MIN_SIGMA_SAMPLES", "5")
     cfg = config.load()
     assert cfg.z_min == 1.5 and cfg.min_sigma_samples == 5
+
+
+def test_sources_never_mix():
+    """Same market id and event on two sources: separate state, separate alerts, separate cooldown."""
+    state, detector = setup_detector({K("A"): 0.60, K("A", "polymarket"): 0.55})
+    assert state.markets[K("A")] is not state.markets[K("A", "polymarket")]
+    alerts = detector.process({K("A"), K("A", "polymarket")}, NOW)
+    assert sorted(a["source"] for a in alerts) == ["kalshi", "polymarket"]
+    for a in alerts:
+        assert a["context"]["related_markets"] == []  # no grouping across sources
+    poly = next(a for a in alerts if a["source"] == "polymarket")
+    assert poly["mid_now"] == Decimal("0.55") and poly["summary"].startswith("[Polymarket] ")
+    # Kalshi's cooldown doesn't block a new Polymarket alert, and vice versa.
+    assert set(detector.cooldown) == {"kalshi:EV", "polymarket:EV"}
