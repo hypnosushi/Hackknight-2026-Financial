@@ -18,10 +18,10 @@ This feature replaces the deleted `new_specs/company-network.md` and answers its
 | F1 Company directory | Done |
 | F2 SEC client | Done |
 | F3 Filing trimmer | Done |
-| F4 Relationship extractor | Not started, unblocked |
-| F5 Link finder | Not started, waits on F4 |
-| F6 News events | Not started, unblocked |
-| F7 Prediction market events | Not started, unblocked |
+| F4 Relationship extractor | Done |
+| F5 Link finder | Not started, unblocked |
+| F6 News events | Done |
+| F7 Prediction market events | Done |
 | F8 Highlight builder | Not started, waits on F5 to F7 |
 | F9 Graph API | Not started, waits on F5, F8 and the FastAPI decision |
 | F10 Graph page | Done (works in fake mode) |
@@ -159,14 +159,13 @@ The result is called a highlight, not a signal, because `alert_detector/signals.
 
 | Step | Feature | Waits on |
 | --- | --- | --- |
-| Done | F0, F1, F2, F3, F10 | |
-| 1 | F4 Relationship extractor, F6 News events, F7 Market events (in parallel) | Nothing |
-| 2 | F5 Link finder | F4 |
-| 3 | F8 Highlight builder | F5, F6, F7 |
-| 4 | F9 Graph API | F5, F8, and the FastAPI decision |
-| 5 | F11 Demo tools | F9 |
+| Done | F0, F1, F2, F3, F4, F6, F7, F10 | |
+| 1 | F5 Link finder | Nothing |
+| 2 | F8 Highlight builder | F5 |
+| 3 | F9 Graph API | F5, F8, and the FastAPI decision |
+| 4 | F11 Demo tools | F9 |
 
-The fastest way to a real (not fake-mode) page is F4, then F5, then F9 with highlights left empty; F6 to F8 can follow.
+The fastest way to a real (not fake-mode) page is F5, then F9 with highlights left empty; F8 can follow.
 
 ---
 
@@ -230,7 +229,7 @@ The fastest way to a real (not fake-mode) page is F4, then F5, then F9 with high
 
 ## F4. Relationship extractor
 
-**Status:** not started, unblocked. **Files:** `company_graph/llm.py`, `company_graph/extract.py`
+**Status:** done. **Files:** `company_graph/llm.py`, `company_graph/extract.py`
 
 **Build:**
 - `llm.py`: a thin wrapper, `complete(system, user, response_model)`, over the team's `backend.llm.client.complete_structured` with `model` set from `GRAPH_LLM_MODEL`, so the model can be swapped in one place. Every free-form model call in this feature (F4, F8) goes through it. It is synchronous; call it through `asyncio.to_thread`.
@@ -241,7 +240,7 @@ The fastest way to a real (not fake-mode) page is F4, then F5, then F9 with high
 
 ## F5. Link finder
 
-**Status:** not started, waits on F4. **File:** `company_graph/links.py`
+**Status:** not started, unblocked. See "Conventions the next features rely on" in `company_graph/company_graph.md`. **File:** `company_graph/links.py`
 
 **Build:** `build_links(symbol)` that
 1. Marks `graph_link_runs` as `running`. Skips the run when the last one is `done` and newer than `GRAPH_LINK_TTL_DAYS`.
@@ -259,7 +258,7 @@ Use one `SecClient` for the whole run, so its rate limiter covers every request.
 
 ## F6. News events
 
-**Status:** not started, unblocked. Fetching (`poll_news`) and classification (Jev) exist; this feature connects them and stores the result. **File:** `company_graph/news_events.py`
+**Status:** done. Fetching (`poll_news`) and classification (Jev) exist; this feature connects them and stores the result. **File:** `company_graph/news_events.py`
 
 NewsAPI limits, from `new_specs/ingestion/news-aggregator.md`: the free tier allows 100 requests per day for the whole team, articles arrive about 24 hours late, and article text is cut to about 200 characters.
 
@@ -275,7 +274,7 @@ NewsAPI limits, from `new_specs/ingestion/news-aggregator.md`: the free tier all
 
 ## F7. Prediction market events
 
-**Status:** not started, unblocked. Detection exists (Donn's alert detector); mapping alerts to companies is new. **File:** `company_graph/market_events.py`
+**Status:** done. Detection exists (Donn's alert detector); mapping alerts to companies is new. **File:** `company_graph/market_events.py`
 
 Do not compare odds yourself. `market_prices` keeps only 30 minutes of rows, and the alert detector already decides what counts as a real move.
 

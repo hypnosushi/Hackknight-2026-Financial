@@ -14,9 +14,21 @@ Spec: `new_specs/ingestion/company-graph-tasks.md`.
 | `sec.py` | F2 | Rate-limited, cached SEC client: filings, filing text, full-text search |
 | `trim.py` | F3 | Cuts a filing down to the passages likely to state a relationship |
 | `config.py`, `db.py`, `schemas.py`, `fixtures/` | F0 | Settings, tables, API shape, fake-mode data |
+| `llm.py`, `extract.py` | F4 | `complete` over the team's `complete_structured`; `extract` reads one passage for a relationship; `save_relationship` validates and upserts into `entity_relationships` |
+| `news_events.py` | F6 | One NewsAPI request per graph, Jev event typing, saved to `graph_events`. Entry point: `refresh_news_events` |
+| `market_events.py` | F7 | Recent `alerts` (read-only) matched to the companies their markets name, saved to `graph_events` and `market_entities`. Entry point: `fetch_market_events` |
 
-Not built yet: the extractor (F4), link finder (F5), news and market events (F6, F7),
-highlight builder (F8), API (F9) and demo commands (F11).
+Not built yet: link finder (F5), highlight builder (F8), API (F9) and demo commands (F11).
+
+### Conventions the next features rely on
+
+- **Link direction (F4):** the filer is `entity_symbol`, and the type is the other company's role for it ("supplier" means it supplies the filer). Flip with `extract.reverse_type`.
+- **Evidence URLs (F4):** `save_relationship` takes `fetched_urls`, the URLs downloaded in the current run, and rejects any other evidence URL. This applies to `sector` links too, so the fallback must pass a URL it fetched (such as the SEC submissions JSON). A `sector` save never overwrites a `filing` row.
+- **SEC client (F2):** each `SecClient` has its own rate limiter, so one link run must share one client.
+- **News cache (F6):** results per company, the daily request budget and Jev labels live in `.cache/company_graph/news_cache.json`. Deleting it only costs a few repeated requests. The budget lock covers one process.
+- **Market names (F7):** a market names a company only through its full name or a cashtag (`$TSLA`); bare tickers and common words never match. Names whose SEC form has extra words (Palantir, Uber, Disney, Ford, Delta) are missed unless added to `backend/entities/data/sp500_top50.json`.
+- **Sync calls:** `llm.complete`, `extract.extract` and Jev are synchronous. Call them through `asyncio.to_thread`.
+- **Saving:** every save function flushes and leaves the commit to the caller.
 
 ## Setup
 
@@ -30,6 +42,12 @@ NEWSAPI_KEY=...                      # news events (F6)
 # Optional, defaults in config.py:
 # GRAPH_LINK_TTL_DAYS=7  GRAPH_EVENT_WINDOW_DAYS=7  GRAPH_MAX_LINKED=12
 # GRAPH_NEWS_TTL_HOURS=6  GRAPH_NEWS_DAILY_BUDGET=40  GRAPH_FAKE=0  GRAPH_LLM_MODEL=...
+```
+
+To check the extractor against the real model (it costs a few model calls):
+
+```
+GRAPH_LIVE_EVAL=1 uv run pytest tests/company_graph/test_extract.py -k live
 ```
 
 ## Tables
