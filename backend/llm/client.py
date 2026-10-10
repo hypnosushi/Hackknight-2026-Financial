@@ -18,7 +18,7 @@ from pydantic import BaseModel, ValidationError
 T = TypeVar("T", bound=BaseModel)
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "anthropic/claude-3.5-haiku"  # cheap/fast; this is structured extraction, not reasoning
+DEFAULT_MODEL = "anthropic/claude-haiku-5.5"  # cheap/fast; this is structured extraction, not reasoning
 
 
 class LlmError(Exception):
