@@ -28,9 +28,16 @@ listed separately so you can see what got filtered and why. Use
 --no-relevance-filter to classify every fetched article unfiltered
 (e.g. to see what the filter is actually removing).
 
+By default this calls NewsAPI directly (needs NEWSAPI_KEY) — but NewsAPI's
+free tier caps you at 100 requests/day, so pass --input <file> to replay
+articles already saved by try_news_api.py instead of fetching again:
+
+    python scripts/try_news_api.py --out scripts/output/news.json
+    python scripts/bench_jev_news.py --input scripts/output/news.json
+
 Usage:
-    python scripts/bench_jev_news.py [--count N] [--mode sentiment|boolean] [--concurrency N] [--out PATH] [--no-relevance-filter]
-    # needs NEWSAPI_KEY and OPENROUTER set (env or .env)
+    python scripts/bench_jev_news.py [--count N] [--mode sentiment|boolean] [--concurrency N] [--out PATH] [--no-relevance-filter] [--input PATH]
+    # needs OPENROUTER set (env or .env); NEWSAPI_KEY only if --input isn't given
 """
 
 import argparse
@@ -49,7 +56,13 @@ sys.path.insert(0, str(REPO_ROOT))
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "scripts" / "output"
 
 from backend.classification import BooleanSpec, JevError, SentimentSpec, classify, filter_relevant  # noqa: E402
-from backend.ingestion.news_api import NewsApiError, NewsApiGateway, NewsQueryFilters, poll_news  # noqa: E402
+from backend.ingestion.news_api import (  # noqa: E402
+    ContentItem,
+    NewsApiError,
+    NewsApiGateway,
+    NewsQueryFilters,
+    poll_news,
+)
 from backend.entities import load_entities  # noqa: E402
 
 
@@ -109,27 +122,41 @@ def main() -> None:
         action="store_true",
         help="skip the relevance filter and classify every fetched article as-is",
     )
+    parser.add_argument(
+        "--input",
+        type=Path,
+        default=None,
+        help="replay articles from a JSON file saved by try_news_api.py's --out "
+        "instead of calling NewsAPI (skips NEWSAPI_KEY entirely)",
+    )
     args = parser.parse_args()
 
-    newsapi_key = require_env("NEWSAPI_KEY")
     require_env("OPENROUTER")
 
-    gateway = NewsApiGateway(api_key=newsapi_key)
-    filters = NewsQueryFilters(keyword_query="nvidia", language="en", page_size=min(args.count, 100))
-    entities = load_entities()
+    if args.input is not None:
+        data = json.loads(args.input.read_text())
+        items = [ContentItem.model_validate(raw) for raw in data["articles"]]
+        print(f"Loaded {len(items)} articles from {args.input} (query={data.get('query')!r}, "
+              f"fetched_at={data.get('fetched_at')!r}).")
+    else:
+        newsapi_key = require_env("NEWSAPI_KEY")
+        gateway = NewsApiGateway(api_key=newsapi_key)
+        filters = NewsQueryFilters(keyword_query="nvidia", language="en", page_size=min(args.count, 100))
+        entities = load_entities()
 
-    try:
-        items = poll_news(filters=filters, gateway=gateway, entities=entities)
-    except NewsApiError as exc:
-        print(f"NewsAPI call failed: [{exc.code}] {exc.message} (retryable={exc.retryable})")
-        sys.exit(1)
+        try:
+            items = poll_news(filters=filters, gateway=gateway, entities=entities)
+        except NewsApiError as exc:
+            print(f"NewsAPI call failed: [{exc.code}] {exc.message} (retryable={exc.retryable})")
+            sys.exit(1)
 
-    if not items:
-        print("No articles returned.")
-        return
+        if not items:
+            print("No articles returned.")
+            return
+
+        print(f"Fetched {len(items)} real NVDA articles.")
 
     items = items[: args.count]
-    print(f"Fetched {len(items)} real NVDA articles.")
 
     dropped_records: list[dict] = []
     if not args.no_relevance_filter:
