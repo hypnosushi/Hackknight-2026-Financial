@@ -512,3 +512,23 @@ def test_live_large_company_gets_three_links():  # pragma: no cover - calls SEC,
     filing = [l for l in stored if l.source == "filing"]
     assert len({l.symbol for l in filing}) >= 3
     assert all(l.evidence_url.startswith("https://www.sec.gov/Archives/edgar/data/") for l in filing)
+
+
+# --- foreign issuers (20-F, 40-F) -------------------------------------------------
+
+def test_reverse_search_covers_foreign_annual_reports(engine):
+    sec = Sec()
+    run(engine, sec)
+    searches = [httpx.URL(u) for u in sec.urls if urlparse(u).netloc == "efts.sec.gov"]
+    assert searches and all(u.params["forms"] == "10-K,20-F,40-F" for u in searches)
+
+
+def test_foreign_issuer_own_20f_is_read(engine):
+    subs = submissions()
+    forms = subs["filings"]["recent"]["form"]
+    subs["filings"]["recent"]["form"] = ["20-F" if f == "10-K" else f for f in forms]
+    sec = Sec(subs=subs)
+    result = run(engine, sec)
+    assert result.status == "done"
+    assert TEN_K in sec.archive_urls() and OLD_TEN_K not in sec.archive_urls()  # newest annual report only
+    assert ("PCRFY", "supplier") in {(l.symbol, l.type) for l in stored_links(engine)}

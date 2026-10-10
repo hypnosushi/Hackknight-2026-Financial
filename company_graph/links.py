@@ -8,12 +8,14 @@ One run, for the searched company S:
   1. Skip if `graph_link_runs` says the last run is `done` and newer than GRAPH_LINK_TTL_DAYS
      (no network call, not even the company directory when the ticker is given exactly).
      Otherwise mark it `running` and commit, so a poller sees it.
-  2. One `list_filings` call (10-K and 8-K) gives S's SIC code, saved to
-     `graph_company_profiles`, its latest 10-K and its 8-Ks from the last 90 days.
-  3. Own 10-K: `trim_by_phrases`, then the companies named in each chunk (US-listed names
+  2. One `list_filings` call (annual reports and 8-Ks) gives S's SIC code, saved to
+     `graph_company_profiles`, its latest annual report and its 8-Ks from the last 90 days.
+     Annual reports are ANNUAL_FORMS: 10-K, plus 20-F and 40-F from foreign companies listed
+     in the US (TSMC, for example), which never file a 10-K.
+  3. Own annual report: `trim_by_phrases`, then the companies named in each chunk (US-listed names
      found through the company directory, as F7 does for markets) are the subjects passed to
      `extract`, with S as the filer.
-  4. Reverse lookup: `full_text_search` for S's short name in quotes, 10-Ks of the last 18
+  4. Reverse lookup: `full_text_search` for S's short name in quotes, annual reports of the last 18
      months, top 10 filings by other filers. Each is trimmed with `trim_by_name` and read with
      the hit's company as the filer and S as the subject.
   5. 8-Ks: read, and kept only when they announce a material agreement or an acquisition
@@ -74,6 +76,7 @@ from company_graph.trim import DEFAULT_PHRASES, Chunk, trim_by_name, trim_by_phr
 log = logging.getLogger(__name__)
 
 TIME_BUDGET_S = 60.0
+ANNUAL_FORMS = ("10-K", "20-F", "40-F")  # US annual report; foreign and Canadian issuers' equivalents
 REVERSE_LOOKBACK_DAYS = 548        # 18 months
 EIGHT_K_LOOKBACK_DAYS = 90
 REVERSE_TOP_HITS = 10
@@ -453,7 +456,7 @@ class _LinkRun:
         try:
             try:
                 filings = await asyncio.wait_for(
-                    self.sec.list_filings(self.company.cik, forms=["10-K", "8-K"]), max(remaining(), 0))
+                    self.sec.list_filings(self.company.cik, forms=[*ANNUAL_FORMS, "8-K"]), max(remaining(), 0))
             except TimeoutError:
                 self.result.timed_out = True
                 filings = None
@@ -496,9 +499,9 @@ class _LinkRun:
 
     async def _own_jobs(self, filings) -> list[_Job]:
         jobs: list[_Job] = []
-        ten_ks = [f for f in filings if f.form.upper() == "10-K" and f.url]
-        if ten_ks:
-            f = ten_ks[0]
+        annual = [f for f in filings if f.form.upper() in ANNUAL_FORMS and f.url]
+        if annual:
+            f = annual[0]  # newest first
             jobs.append(_Job(f.accession_number, f.accession_number, self.company.cik, f.form, f.url,
                              "own10k", self.company))
         since = self.today - timedelta(days=EIGHT_K_LOOKBACK_DAYS)
@@ -521,7 +524,7 @@ class _LinkRun:
     async def _search(self) -> list[SearchHit]:
         query = f'"{short_name(self.company.name) or self.company.name}"'
         since = self.today - timedelta(days=REVERSE_LOOKBACK_DAYS)
-        return await self.sec.full_text_search(query, forms=["10-K"], since=since)
+        return await self.sec.full_text_search(query, forms=list(ANNUAL_FORMS), since=since)
 
     async def _on_search(self, task: asyncio.Task) -> set[asyncio.Task]:
         try:
