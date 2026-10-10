@@ -51,21 +51,35 @@ class TwitterApiGateway:
             fallback_author=username.lstrip("@"),
         )
 
-    def fetch_recent_search(self, query: str, start: datetime, end: datetime) -> list[dict]:
+    def fetch_recent_search(
+        self,
+        query: str,
+        start: datetime,
+        end: datetime,
+        max_pages: int = MAX_PAGES,
+        sort_order: str | None = None,
+    ) -> list[dict]:
         """Tweets matching `query` in [start, end], following pagination
-        up to `MAX_PAGES` pages. X's recent-search only covers roughly
+        up to `max_pages` pages. X's recent-search only covers roughly
         the last 7 days regardless of how far back `start` is set.
+        `sort_order` is X's "recency" (its default) or "relevancy".
         """
-        return self._paginate(
-            "/tweets/search/recent", {**self._params(start, end), "query": query}, token_param="next_token"
-        )
+        params = {**self._params(start, end), "query": query}
+        if sort_order:
+            params["sort_order"] = sort_order
+        return self._paginate("/tweets/search/recent", params, token_param="next_token", max_pages=max_pages)
 
     def _paginate(
-        self, path: str, base_params: dict, token_param: str, fallback_author: str | None = None
+        self,
+        path: str,
+        base_params: dict,
+        token_param: str,
+        fallback_author: str | None = None,
+        max_pages: int = MAX_PAGES,
     ) -> list[dict]:
         tweets: list[dict] = []
         next_token = None
-        for _ in range(MAX_PAGES):
+        for _ in range(max_pages):
             params = dict(base_params)
             if next_token:
                 params[token_param] = next_token
