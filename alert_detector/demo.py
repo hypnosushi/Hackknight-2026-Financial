@@ -24,8 +24,8 @@ from dotenv import load_dotenv
 from sqlalchemy import delete, insert, select
 
 from alert_detector import db
-from ingestion.common.db import DEMO_SERIES as SERIES  # the workers never close markets in this series
-from models import Alert, Market, MarketBaseline, MarketHourly, MarketPrice, MarketTrade
+from backend.ingestion.common.db import DEMO_SERIES as SERIES  # the workers never close markets in this series
+from backend.models import Alert, Market, MarketBaseline, MarketHourly, MarketPrice, MarketTrade
 
 RELOAD_WAIT_S = 65   # the detector reloads market metadata and baselines every 60 s
 REPORT_WAIT_S = 20   # how long to wait for alerts after inserting the trigger rows
