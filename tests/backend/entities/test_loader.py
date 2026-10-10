@@ -1,4 +1,4 @@
-from entities import load_entities
+from backend.entities import load_entities
 
 
 def test_load_entities_returns_fifty():

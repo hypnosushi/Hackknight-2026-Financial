@@ -36,11 +36,42 @@ scope for this direction.
 ## User Stories / Example Interactions
 
 - As a user, I want a quick positive/negative read on a news item without
-  defining anything myself.
-- As a user, I want to ask a custom question (e.g. "is this bullish for
-  semiconductors?") and have every matching item classified against it.
+  defining anything myself. (`sentiment` mode — zero config, fixed
+  positive/negative/neutral labels.)
+- As a user, I want to ask a custom yes/no question (e.g. "is this bullish
+  for semiconductors?") and have every matching item classified against it.
+  (`boolean` mode.)
 - As the system, when an item is classified, I want that result available
   to [[trending-cards]] and [[news-graphing]] so they can surface it.
+
+**`choice` mode** — sentiment's fixed positive/negative/neutral isn't
+enough once the categories are domain-specific rather than "good vs bad."
+`choice` is the same underlying Jev primitive as `sentiment` (one
+question, one winning label from a set, a probability per label), except
+the user supplies both the question and the label set instead of getting
+them hardcoded. Concrete queries a user could configure:
+
+- "What type of event does this describe?" → `{earnings, fed-decision,
+  tariff-sanctions, product-launch, regulatory-action, other}` —
+  consistent event-type tags across every item, for later backtesting.
+- "Which of these companies is this article mainly about?" → `{NVDA, AMD,
+  INTC, none-specifically}` — disambiguates a multi-chipmaker roundup from
+  an article that's actually about one of them (the per-entity relevance
+  problem [[entities]]/[[classification/relevance]] also addresses, as a
+  yes/no instead of a pick-one).
+- "What action, if any, does this news suggest for a position in NVDA?" →
+  `{buy-signal, sell-signal, hold-no-action, needs-more-info}` — a
+  discrete recommendation bucket, not a sentiment score.
+- "Which downstream desk should review this?" → `{earnings-desk,
+  policy-desk, supply-chain-desk, discard}` — the original spec's
+  "support routing" use case, reframed as `choice`.
+- "What is the overall analyst recommendation in this article?" →
+  `{upgrade, downgrade, maintain, initiate-coverage, not-mentioned}`.
+
+Implemented as `SentimentSpec`/`ChoiceSpec` in `backend/classification`
+(see `modes.py`) — both wrap Jev's `Choice` primitive; `multi_select`
+(also implemented) covers the case where more than one label can apply
+at once, since Jev's `Choice` itself is single-select only.
 
 ## Functional Requirements
 
