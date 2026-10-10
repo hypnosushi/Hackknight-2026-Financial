@@ -2,17 +2,26 @@
 see real NewsAPI results printed to the terminal, no backend/frontend
 needed.
 
+Also saves the fetched articles to a JSON file (default:
+scripts/output/news_<query>_<timestamp>.json) so other scripts — e.g.
+bench_jev_news.py --input <file> — can reuse this one fetch instead of
+calling NewsAPI again. NewsAPI's free tier caps you at 100 requests/day,
+so fetch once here and replay from the file for everything downstream.
+
 Usage:
     NEWSAPI_KEY=your_key_here python scripts/try_news_api.py
     # or add NEWSAPI_KEY=... to the repo's .env file and just run:
-    python scripts/try_news_api.py
+    python scripts/try_news_api.py [--query nvidia] [--count 100] [--out PATH]
 
 Get a free key at https://newsapi.org/register (Developer plan: 100
 requests/day, dev/testing use only — see new_specs/ingestion/news-aggregator.md).
 """
 
+import argparse
+import json
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -20,7 +29,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # sys.path, not the repo root — add it so `ingestion` is importable.
 sys.path.insert(0, str(REPO_ROOT))
 
-from entities import load_entities  # noqa: E402
+DEFAULT_OUTPUT_DIR = REPO_ROOT / "scripts" / "output"
+
+from backend.entities import load_entities  # noqa: E402
 from backend.ingestion.news_api import (  # noqa: E402
     NewsApiError,
     NewsApiGateway,
@@ -62,10 +73,22 @@ def get_api_key() -> str:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--query", default="nvidia", help="keyword_query to search NewsAPI for (default nvidia)")
+    parser.add_argument("--count", type=int, default=100, help="page_size, max 100 (default 100)")
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="where to save fetched articles as JSON "
+        f"(default: {DEFAULT_OUTPUT_DIR}/news_<query>_<timestamp>.json)",
+    )
+    args = parser.parse_args()
+
     api_key = get_api_key()
     gateway = NewsApiGateway(api_key=api_key)
 
-    filters = NewsQueryFilters(keyword_query="nvidia", language="en", page_size=100)
+    filters = NewsQueryFilters(keyword_query=args.query, language="en", page_size=args.count)
     entities = load_entities()  # top-50 S&P watchlist, loaded once at startup
 
     try:
@@ -88,6 +111,23 @@ def main() -> None:
         print(f"  url:          {item.url}")
         print(f"  published_at: {item.published_at}")
         print()
+
+    out_path = args.out
+    if out_path is None:
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        out_path = DEFAULT_OUTPUT_DIR / f"news_{args.query}_{timestamp}.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        json.dumps(
+            {
+                "query": args.query,
+                "fetched_at": datetime.now(timezone.utc).isoformat(),
+                "articles": [item.model_dump(mode="json") for item in items],
+            },
+            indent=2,
+        )
+    )
+    print(f"Saved {len(items)} articles to {out_path.relative_to(REPO_ROOT)}")
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@ should only import poll_news — everything else in this package is an
 implementation detail reachable through it.
 """
 
-from entities import EntityAlias, EntityMatcher
+from backend.entities import EntityAlias, EntityMatcher
 
 from .client import NewsApiGateway
 from .models import ContentItem, NewsQueryFilters

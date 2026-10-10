@@ -14,7 +14,7 @@ from pydantic import ValidationError
 
 from .primitives import ANSWER_TYPES, JevAnswer, JevQuestion
 
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_URL = "https://openrouter.ai/api/alpha/decisions"
 DEFAULT_MODEL = "typesafe/jev-1.13"
 
 

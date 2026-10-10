@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from entities import EntityAlias
+from backend.entities import EntityAlias
 from backend.ingestion.news_api.client import NewsApiGateway
 from backend.ingestion.news_api.models import NewsQueryFilters
 from backend.ingestion.news_api.service import poll_news

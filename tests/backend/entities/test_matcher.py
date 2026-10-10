@@ -1,4 +1,4 @@
-from entities import EntityAlias, EntityMatcher
+from backend.entities import EntityAlias, EntityMatcher
 
 
 def _matcher():
