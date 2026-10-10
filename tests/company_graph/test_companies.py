@@ -245,3 +245,18 @@ def test_size_rank_follows_secs_order_and_lookup_by_cik():
     assert d.size_rank(42) == len(d.__dict__["_size_rank"])  # unlisted: after every listed company
     assert d.by_cik(1652044).symbol == "GOOGL"  # the first listing for the CIK
     assert d.by_cik(42) is None
+
+
+@pytest.mark.parametrize("title,short", [
+    ("JPMORGAN CHASE & CO", "JPMORGAN CHASE"),       # connector left behind by "& CO"
+    ("ELI LILLY & Co", "ELI LILLY"),
+    ("Merck & Co., Inc.", "Merck"),
+    ("PROGRESSIVE CORP/OH/", "PROGRESSIVE"),         # upper-case state tag with no space
+    ("MARRIOTT INTERNATIONAL INC /MD/", "MARRIOTT INTERNATIONAL"),
+    ("JOHNSON & JOHNSON", "JOHNSON & JOHNSON"),       # an "&" inside the name stays
+    ("AT&T INC.", "AT&T"),
+    ("111, Inc.", "111"),                             # number-only names are kept
+    ("Tesla, Inc.", "Tesla"),
+])
+def test_short_name_gives_the_name_filings_use(title, short):
+    assert companies.short_name(title) == short

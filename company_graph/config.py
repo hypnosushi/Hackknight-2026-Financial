@@ -18,7 +18,9 @@ class Config:
     graph_news_ttl_hours: float = 6      # how long one company's news result is reused
     graph_news_daily_budget: int = 40    # most NewsAPI requests this feature may make per day
     graph_fake: int = 0                  # 1 = serve fixtures, call nothing outside
+    graph_llm_provider: str = "openrouter"  # "openrouter" (the team's client) or "anthropic" (ANTHROPIC_API_KEY)
     graph_llm_model: str = DEFAULT_MODEL  # OpenRouter model id; the team default lives in backend/llm/client.py
+    graph_anthropic_model: str = "claude-opus-5-5"  # Claude model id when GRAPH_LLM_PROVIDER=anthropic
     sec_contact_email: str = ""          # sent in the SEC User-Agent; required for any SEC call
     newsapi_key: str = ""
     database_url: str = ""
@@ -49,6 +51,8 @@ def load() -> Config:
     cfg = Config(**values)
     if cfg.graph_fake not in (0, 1):
         raise SystemExit(f"GRAPH_FAKE must be 0 or 1, got {cfg.graph_fake}")
+    if cfg.graph_llm_provider not in ("openrouter", "anthropic"):
+        raise SystemExit(f"GRAPH_LLM_PROVIDER must be openrouter or anthropic, got {cfg.graph_llm_provider!r}")
     if cfg.graph_max_linked < 1:
         raise SystemExit(f"GRAPH_MAX_LINKED must be at least 1, got {cfg.graph_max_linked}")
     return cfg

@@ -28,6 +28,7 @@ Not built yet: highlight builder (F8), API (F9) and demo commands (F11).
 - **SEC client (F2):** each `SecClient` has its own rate limiter, so one link run must share one client.
 - **News cache (F6):** results per company, the daily request budget and Jev labels live in `.cache/company_graph/news_cache.json`. Deleting it only costs a few repeated requests. The budget lock covers one process.
 - **Market names (F7):** a market names a company only through its full name or a cashtag (`$TSLA`); bare tickers and common words never match. Names whose SEC form has extra words (Palantir, Uber, Disney, Ford, Delta) are missed unless added to `backend/entities/data/sp500_top50.json`.
+- **Model provider (F4, F8):** `llm.complete` uses the team's OpenRouter client by default, or the Anthropic SDK directly with `GRAPH_LLM_PROVIDER=anthropic` (structured outputs, low effort, server-side fallbacks on models that support them). Every failure is an `LlmError` either way. The team's OpenRouter default model, `anthropic/claude-3.5-haiku`, has been retired, so set `GRAPH_LLM_MODEL` when using OpenRouter.
 - **Sync calls:** `llm.complete`, `extract.extract` and Jev are synchronous. Call them through `asyncio.to_thread`.
 - **Saving:** every save function flushes and leaves the commit to the caller. The exception is `build_links`, which commits as it goes so pollers see progress: give it its own session.
 - **Reading links (F5):** call `links.read_links(session, symbol, cfg.graph_max_linked)`, never a plain `entity_symbol = symbol` query. Reverse-lookup links are stored from the other company's side and `read_links` flips them.
@@ -45,7 +46,10 @@ Add to `.env` (see `.env.example` for the shared keys and the company graph bloc
 ```
 DATABASE_URL=postgresql://...        # the team database
 SEC_CONTACT_EMAIL=you@example.com    # SEC rejects requests without a contact
-OPENROUTER=...                       # model calls (F4, F6, F8), through backend/llm and Jev
+OPENROUTER=...                       # model calls through backend/llm and Jev (F6)
+GRAPH_LLM_PROVIDER=anthropic         # optional: F4/F8 call Claude directly instead of via OpenRouter
+ANTHROPIC_API_KEY=sk-ant-...         # needed when GRAPH_LLM_PROVIDER=anthropic
+# GRAPH_ANTHROPIC_MODEL=claude-haiku-5-5   # optional: cheaper than the default claude-opus-5-5
 NEWSAPI_KEY=...                      # news events (F6)
 # Optional, defaults in config.py:
 # GRAPH_LINK_TTL_DAYS=7  GRAPH_EVENT_WINDOW_DAYS=7  GRAPH_MAX_LINKED=12

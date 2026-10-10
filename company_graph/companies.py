@@ -30,7 +30,7 @@ _SUFFIXES = {
     "ltd", "limited", "plc", "llc", "lp", "llp", "sa", "ag", "nv", "se", "spa",
     "holdings", "holding", "group", "the", "de", "new", "com",
 }
-_STATE_TAG = re.compile(r"[/\\][a-z]{2,3}[/\\]?$")  # SEC titles like "FOO CORP /DE/"
+_STATE_TAG = re.compile(r"\s*[/\\][a-z]{2,3}[/\\]?$", re.IGNORECASE)  # SEC titles like "FOO CORP /DE/", "BAR INC/MD/"
 
 
 @dataclass(frozen=True)
@@ -59,9 +59,10 @@ def short_name(name: str) -> str:
     """Display name without trailing suffixes, keeping the original case: "Tesla, Inc." -> "Tesla"."""
     s = _STATE_TAG.sub("", name.strip()).strip()
     words = s.split()
-    while words and re.sub(r"[^a-z]", "", words[-1].lower()) in _SUFFIXES:
+    # Drop trailing suffixes, and connectors they leave behind: "JPMORGAN CHASE & CO" -> "JPMORGAN CHASE".
+    while words and (re.sub(r"[^a-z0-9]", "", words[-1].lower()) in _SUFFIXES | {"", "and"}):
         words.pop()
-    return " ".join(words).rstrip(",. ")
+    return " ".join(words).rstrip(",.&/- ")
 
 
 class CompanyDirectory:

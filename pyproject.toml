@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Financial signals ingestion layer (news_api and friends)"
 requires-python = ">=3.11"
 dependencies = [
+    "anthropic>=1.13.0",
     "asyncpg>=0.32.0",
     "cryptography>=50.0.2",
     "fastapi>=0.115",
