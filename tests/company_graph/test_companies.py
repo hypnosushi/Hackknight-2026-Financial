@@ -3,10 +3,12 @@ import json
 import os
 import time
 
+import httpx
 import pytest
 
 from company_graph import companies
 from company_graph.companies import Company, CompanyDirectory, load_sec_json, normalize_name
+from company_graph.sec import SecClient, SecConfigError
 
 # A small stand-in for SEC's company_tickers.json (same shape).
 SEC_FIXTURE = {
@@ -128,6 +130,37 @@ def test_load_sec_json_fetches_once_then_uses_cache(tmp_path):
     assert cache.exists()
     assert load_sec_json(cache, fetch) == SEC_FIXTURE
     assert len(calls) == 1
+
+
+def _fake_sec_client(seen):
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, json=SEC_FIXTURE)
+
+    return lambda: SecClient("test@example.com", cache_dir=None, transport=httpx.MockTransport(handler))
+
+
+def test_fetch_sec_json_goes_through_sec_client():
+    seen = []
+    assert companies._fetch_sec_json(_fake_sec_client(seen)) == SEC_FIXTURE
+    assert str(seen[0].url) == companies.SEC_TICKERS_URL
+    assert "test@example.com" in seen[0].headers["User-Agent"]
+
+
+def test_fetch_sec_json_works_inside_a_running_event_loop():
+    seen = []
+
+    async def handler_like_caller():
+        return companies._fetch_sec_json(_fake_sec_client(seen))
+
+    assert asyncio.run(handler_like_caller()) == SEC_FIXTURE
+    assert len(seen) == 1
+
+
+def test_fetch_sec_json_without_contact_email_fails_before_any_request(monkeypatch):
+    monkeypatch.delenv("SEC_CONTACT_EMAIL", raising=False)
+    with pytest.raises(SecConfigError):
+        companies._fetch_sec_json()
 
 
 def test_load_sec_json_falls_back_to_stale_cache(tmp_path):

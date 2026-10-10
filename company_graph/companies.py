@@ -7,10 +7,11 @@ Only companies that are searched or linked get an `entities` row
 (ensure_entity); the full SEC list is never bulk-loaded into that table.
 """
 
+import asyncio
 import json
-import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -155,14 +156,27 @@ class CompanyDirectory:
 
 # --- loading -----------------------------------------------------------------
 
-def _fetch_sec_json() -> dict[str, Any]:
-    import httpx
+def _fetch_sec_json(client_factory: Callable[[], Any] | None = None) -> dict[str, Any]:
+    """Download through SecClient so the request gets the SEC User-Agent, rate limit and retries.
 
-    contact = os.environ.get("SEC_CONTACT_EMAIL") or "unknown@example.com"
-    headers = {"User-Agent": f"Hackknight company-graph {contact}", "Accept-Encoding": "gzip, deflate"}
-    resp = httpx.get(SEC_TICKERS_URL, headers=headers, timeout=30)
-    resp.raise_for_status()
-    return resp.json()
+    load_sec_json keeps its own week-long cache, so the client's cache is off. Callers are
+    synchronous but may sit inside a running event loop (an API handler), so in that case the
+    download runs on a worker thread with its own loop.
+    """
+    from company_graph.sec import SecClient
+
+    factory = client_factory or (lambda: SecClient(cache_dir=None))
+
+    async def fetch() -> dict[str, Any]:
+        async with factory() as sec:
+            return await sec.get_json(SEC_TICKERS_URL)
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(fetch())
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, fetch()).result()
 
 
 def load_sec_json(

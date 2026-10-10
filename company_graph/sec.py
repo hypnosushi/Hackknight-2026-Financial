@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Awaitable, Callable, Iterable
+from typing import Any, Awaitable, Callable, Iterable
 from urllib.parse import urlencode
 
 import httpx
@@ -210,6 +210,10 @@ class SecClient:
             listing_venue=exchanges[0] if exchanges else None,
             filings=filings,
         )
+
+    async def get_json(self, url: str) -> Any:
+        """Any SEC JSON file (e.g. company_tickers.json), with the same User-Agent, limiter, retries and cache."""
+        return json.loads(await self._get(url))
 
     async def fetch_text(self, url: str) -> str:
         """Download a filing document and return its visible text."""
