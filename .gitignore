@@ -1,3 +1,6 @@
+# Generated output from one-off scripts (fetched articles, bench results) — not committed data.
+/scripts/output/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -224,3 +227,6 @@ __marimo__/
 
 # Kalshi API private keys
 *.pem
+
+# Claude Code agent worktrees
+.claude/worktrees/
