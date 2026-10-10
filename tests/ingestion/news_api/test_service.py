@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
 
+from entities import EntityAlias
 from ingestion.news_api.client import NewsApiGateway
-from ingestion.news_api.entity_match import EntityAlias
 from ingestion.news_api.models import NewsQueryFilters
 from ingestion.news_api.service import poll_news
 

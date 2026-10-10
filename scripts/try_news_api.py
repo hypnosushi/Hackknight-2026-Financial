@@ -20,8 +20,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # sys.path, not the repo root — add it so `ingestion` is importable.
 sys.path.insert(0, str(REPO_ROOT))
 
+from entities import load_entities  # noqa: E402
 from ingestion.news_api import (  # noqa: E402
-    EntityAlias,
     NewsApiError,
     NewsApiGateway,
     NewsQueryFilters,
@@ -65,10 +65,8 @@ def main() -> None:
     api_key = get_api_key()
     gateway = NewsApiGateway(api_key=api_key)
 
-    filters = NewsQueryFilters(keyword_query="nvidia", language="en", page_size=2)
-    entities = [
-        EntityAlias(symbol="NVDA", aliases=["Nvidia", "Nvidia Corporation"]),
-    ]
+    filters = NewsQueryFilters(keyword_query="nvidia", language="en", page_size=100)
+    entities = load_entities()  # top-50 S&P watchlist, loaded once at startup
 
     try:
         items = poll_news(filters=filters, gateway=gateway, entities=entities)

@@ -3,8 +3,9 @@ should only import poll_news — everything else in this package is an
 implementation detail reachable through it.
 """
 
+from entities import EntityAlias, EntityMatcher
+
 from .client import NewsApiGateway
-from .entity_match import EntityAlias, EntityMatcher
 from .models import ContentItem, NewsQueryFilters
 from .normalize import normalize_batch
 

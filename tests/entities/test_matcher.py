@@ -1,4 +1,4 @@
-from ingestion.news_api.entity_match import EntityAlias, EntityMatcher
+from entities import EntityAlias, EntityMatcher
 
 
 def _matcher():
@@ -41,7 +41,7 @@ def test_multiple_entities_matched():
 def test_known_false_positive_on_generic_word_is_accepted_behavior():
     # "Target" as a generic English word triggers a match on the TGT entity
     # even when the article isn't about the retailer. Documented as
-    # accepted behavior (see entity_match.py module docstring) rather than
+    # accepted behavior (see matcher.py module docstring) rather than
     # a bug — a later relevance pass is expected to correct this.
     matcher = _matcher()
     assert matcher.match("Analysts target a new price for the sector", None) == ["TGT"]
