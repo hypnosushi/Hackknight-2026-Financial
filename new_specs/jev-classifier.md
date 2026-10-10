@@ -73,8 +73,8 @@ Draft shape (not final):
 
 ## Dependencies
 
-- [[ingestion/news-aggregator]] and [[ingestion/twitter-aggregator]] —
-  upstream content sources.
+- [[ingestion/news-aggregator]], [[ingestion/twitter-aggregator]], and
+  [[ingestion/twitter-lookup]] — upstream content sources.
 - [[trending-cards]] and [[news-graphing]] — consumers of classification
   results.
 

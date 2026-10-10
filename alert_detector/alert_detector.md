@@ -1,6 +1,8 @@
 # Alert detector
 
-Watches the live Kalshi data that the ingestion worker writes to Postgres.
+Watches the live data that the ingestion workers (Kalshi, Polymarket, Polymarket US)
+write to Postgres. One detector covers every source: markets are keyed by
+`(source, market_id)`, and grouping and cooldowns never cross sources.
 When a market move looks real, it writes a row to `alerts`. A separate LLM
 enricher (not built yet) picks up each alert and researches it using tweets,
 news and the graph DB.
@@ -14,41 +16,44 @@ news and the graph DB.
 
 ## Run
 
-The ingestion worker must be running, because the detector reads its tables.
+The ingestion workers must be running, because the detector reads their tables.
+The baseline job (`python -m baselines`, see `baselines/baselines.md`) must have run
+at least once: without a baseline, a market's signals say "no baseline yet".
 From the repo root:
 
 ```
 uv run python -m alert_detector            # runs until Ctrl+C
 uv run python -m alert_detector --explain  # one evaluation, prints why, writes nothing
+uv run python -m alert_detector --explain --source polymarket  # same, one source only
 ```
 
 How it runs:
 
-- **Startup.** Loads the last ~2h50m of prices and trades into memory.
+- **Startup.** Loads the last 20 minutes of prices and trades into memory,
+  plus every market's baseline from `market_baselines`.
 - **Every second (`POLL_S`).** Reads the new rows (`id > last seen`) and
   re-evaluates every market that got one.
-- **Baselines.** Typical volatility, normal volume and the whale threshold
-  are cached per market and recomputed at most once a minute.
-- **Every minute.** Reloads market metadata, drops old data, and logs one line:
+- **Every minute.** Reloads market metadata and baselines, drops old data, and logs one line:
   evaluations, candidates and alerts written.
 
 ## The four signals, in plain words
 
-The window is the last 5 minutes. All "normal" levels come from the 2.5 hours
-before the window.
+The window is the last 5 minutes. All "normal" levels come from `market_baselines`,
+computed from days of history by the baseline job and refreshed every 8 hours.
 
 1. **Price move.** How far the midpoint moved in 5 minutes, divided by how far
    it usually moves in 5 minutes. That gives a z-score; it fires at |z| ≥ 3.
    - Only good quotes count: both sides have orders and the spread is ≤ 10 pts.
    - Skipped when a reconnect gap falls in the window, when the price is pinned
-     near 0 or 1, or before 30 minutes of history exist.
+     near 0 or 1, or when the baseline has fewer than 30 five-minute samples.
    - Typical movement has a floor of 1 point, so a tiny wiggle in a dead market
      doesn't look huge.
 2. **Volume burst.** Dollars traded in the window compared with the normal
    dollars per 5 minutes. Fires at 5× normal and at least $300.
    - Dollars, not contracts: 10,000 contracts at $0.01 is only $100.
 3. **Whale.** Any single order bigger than this market's 99th-percentile order
-   size (at least $500). It uses a flat $1,000 when there's too little history.
+   size, from the baseline (at least $500). It uses a flat $1,000 when the
+   baseline has fewer than 50 orders.
    - Several fills with the same timestamp and side count as one order.
    - Block trades are flagged.
 4. **Imbalance.** What share of the window's taker dollars bought the same
@@ -76,7 +81,8 @@ Other rules:
 | Column | Meaning |
 |---|---|
 | `status` | `pending` → `processing` → `done` / `failed` (the enricher updates it) |
-| `market_id`, `event_ticker`, `series` | which market (the strongest in its event) |
+| `source` | `kalshi`, `polymarket` or `polymarket_us` |
+| `market_id`, `event_id`, `series_id` | which market (the strongest in its event) |
 | `direction` | `yes_up` or `yes_down` |
 | `reasons` | which signals fired: `price_move`, `volume_burst`, `whale`, `imbalance` |
 | `score` | ranking. Combines z (capped at 3), volume ratio ÷ 5 (capped at 3), +1 for a whale, + imbalance |
@@ -85,8 +91,8 @@ Other rules:
 | `window_notional`, `volume_ratio` | $ traded in the window, and × normal |
 | `imbalance`, `imbalance_side` | 0–1 one-sidedness, and toward which side |
 | `whale_notional`, `whale_side`, `is_block_trade` | the whale order, if one fired |
-| `summary` | one plain sentence for the LLM |
-| `context` (jsonb) | `market` metadata, `price_path` (minute mids, last 30 min), `top_trades` (5 largest orders), `related_markets`, `thresholds` |
+| `summary` | one plain sentence for the LLM, starting with the platform, e.g. `[Polymarket] ...` |
+| `context` (jsonb) | `market` metadata (incl. `source` and `url`), `price_path` (minute mids, last 30 min), `top_trades` (5 largest orders), `related_markets`, `thresholds` |
 
 ### How the enricher claims an alert
 
@@ -109,19 +115,21 @@ kind of alert. It then reports whether the running detector caught them.
 ```
 uv run python -m alert_detector            # terminal 1, default thresholds
 uv run python -m alert_detector.demo       # terminal 2, takes ~90 s
+uv run python -m alert_detector.demo --source polymarket   # same, as Polymarket markets
 uv run python -m alert_detector.demo --cleanup   # delete all demo data afterwards
 ```
 
 | Scenario | Fake data | Expected |
 |---|---|---|
-| PRICE | Midpoint jumps 0.40 → 0.48 on a flat history | `price_move` |
+| PRICE | Midpoint jumps 0.40 → 0.48 where 5-min moves are usually 1 pt | `price_move` |
 | WHALE | One $2,000 order where orders are usually $40 | `whale` |
 | BURST | $820 in 5 min (usually ~$10), 98% YES-buying | `volume_burst`, `imbalance` |
 | ALL | Price jump + burst + $1,500 order + one-sided buying | all four |
 | CHURN | One-sided buying, no price or volume change | no alert |
 | CLOSING | Price jump in a market closing in 10 min | no alert |
 
-The demo markets use the `KXDEMO` series, which the ingestion worker ignores.
+The demo markets use the `KXDEMO` series. The ingestion workers never follow or
+close markets in it, so the fake markets stay active until `--cleanup`.
 The script waits 65 s after creating them because the detector reloads market
 metadata once a minute. Run only one detector at a time, or each instance
 writes its own copy of every alert.
@@ -130,8 +138,8 @@ writes its own copy of every alert.
 
 Every threshold can be set in `.env` (see the "Alert detector" section of
 `.env.example`). Real moves may not happen during a demo, so lower them, e.g.
-`Z_MIN=1.5 BURST_RATIO=2`, and restart. `BASELINE_HOURS` must leave room inside
-the ingestion's 3-hour retention.
+`Z_MIN=1.5 BURST_RATIO=2`, and restart. `WINDOW_MIN` + `LOOKBACK_MIN` must fit
+inside the ingestion's 30-minute retention.
 
 ## Verify
 

@@ -1,15 +1,15 @@
 """The signal maths as pure functions: plain inputs, no I/O, `now` passed in.
 
-Times are Unix seconds (Kalshi's timestamps). Prices are 0-1 YES probabilities;
+Times are Unix seconds (the platforms' timestamps). Prices are 0-1 YES probabilities;
 changes are absolute points (0.05 = 5 points). Money is dollars.
 
 Inputs:
-- quotes: sorted list of (t, mid) from good quotes only
+- quotes: sorted list of (t, mid) from good quotes only (the last ~20 minutes)
 - snapshots: sorted list of times where a reconnect catch-up row arrived (data gap)
 - trades: sorted list of Trade
+- b: a market_baselines row ("normal" from days of history), or None if not computed yet
 """
 
-import statistics
 from bisect import bisect_right
 from dataclasses import dataclass
 from typing import NamedTuple
@@ -73,27 +73,21 @@ class PriceMove:
     skip: str | None = None
 
 
-def compute_sigma(quotes, snapshots, now: float, cfg) -> tuple[float | None, int]:
-    """Typical 5-minute move: stdev of past W-minute changes, sampled every minute.
+def baseline_sigma(b, cfg) -> tuple[float | None, int] | None:
+    """Typical 5-minute move from a market_baselines row: (sigma, samples), or None without a baseline.
 
-    Returns (sigma, samples); sigma is None during warm-up. The floor stops a
-    quiet market turning a 1-point blip into a huge z.
+    sigma is None when there were too few samples. The floor stops a quiet market
+    turning a 1-point blip into a huge z.
     """
-    w, lookback = cfg.window_s, cfg.lookback_s
-    changes = []
-    t = now - cfg.baseline_s
-    while t <= now - w:
-        before, after = mid_at(quotes, t - w, lookback), mid_at(quotes, t, lookback)
-        if before is not None and after is not None and not has_snapshot(snapshots, t - w, t):
-            changes.append(after - before)
-        t += 60
-    if len(changes) < cfg.min_sigma_samples:
-        return None, len(changes)
-    return max(statistics.pstdev(changes), cfg.sigma_floor), len(changes)
+    if b is None:
+        return None
+    if b.sigma_5m is None or b.sigma_samples < cfg.min_sigma_samples:
+        return None, b.sigma_samples
+    return max(float(b.sigma_5m), cfg.sigma_floor), b.sigma_samples
 
 
-def price_move(quotes, snapshots, now: float, cfg, sigma: tuple | None = None) -> PriceMove:
-    """5-minute midpoint change as a z-score. Pass a cached (sigma, samples) to skip recomputing."""
+def price_move(quotes, snapshots, now: float, cfg, sigma: tuple | None) -> PriceMove:
+    """5-minute midpoint change as a z-score. `sigma` is baseline_sigma(...)."""
     w = cfg.window_s
     r = PriceMove(mid_now=mid_at(quotes, now, cfg.lookback_s),
                   mid_before=mid_at(quotes, now - w, cfg.lookback_s))
@@ -107,9 +101,12 @@ def price_move(quotes, snapshots, now: float, cfg, sigma: tuple | None = None) -
     if max(r.mid_now, r.mid_before) <= PINNED_LOW or min(r.mid_now, r.mid_before) >= PINNED_HIGH:
         r.skip = "pinned near 0 or 1"
         return r
-    r.sigma, r.samples = sigma if sigma is not None else compute_sigma(quotes, snapshots, now, cfg)
+    if sigma is None:
+        r.skip = "no baseline yet"
+        return r
+    r.sigma, r.samples = sigma
     if r.sigma is None:
-        r.skip = f"warm-up {r.samples}/{cfg.min_sigma_samples} samples"
+        r.skip = f"thin history: {r.samples}/{cfg.min_sigma_samples} samples"
         return r
     r.z = r.change / r.sigma
     r.fired = abs(r.z) >= cfg.z_min
@@ -149,25 +146,23 @@ class VolumeBurst:
     skip: str | None = None
 
 
-def volume_baseline(trades, first_seen: float | None, now: float, cfg) -> tuple[float | None, float]:
-    """Mean $ per W-minute bucket before the window (empty buckets count as $0).
-
-    Returns (baseline, history_minutes); baseline is None during warm-up.
-    """
-    end = now - cfg.window_s
-    start = max(now - cfg.baseline_s, first_seen if first_seen is not None else end)
-    span = end - start
-    if span < cfg.min_baseline_min * 60:
-        return None, max(span, 0) / 60
-    total = sum(tr.notional for tr in trades_between(trades, start, end))
-    return total / (span / cfg.window_s), span / 60
+def baseline_volume(b) -> tuple[float | None, float] | None:
+    """Normal $ per window from a market_baselines row: (volume, history_minutes), or None."""
+    if b is None:
+        return None
+    return (None if b.volume_per_window is None else float(b.volume_per_window)), float(b.history_minutes)
 
 
-def volume_burst(window_trades, baseline: tuple, cfg) -> VolumeBurst:
+def volume_burst(window_trades, baseline: tuple | None, cfg) -> VolumeBurst:
+    """`baseline` is baseline_volume(...)."""
     r = VolumeBurst(window_notional=sum(tr.notional for tr in window_trades))
+    if baseline is None:
+        r.skip = "no baseline yet"
+        return r
     r.baseline, history_min = baseline
-    if r.baseline is None:
-        r.skip = f"warm-up {history_min:.0f}/{cfg.min_baseline_min:.0f} min of history"
+    if r.baseline is None or history_min < cfg.min_baseline_min:
+        r.baseline = None
+        r.skip = f"thin history: {history_min:.0f}/{cfg.min_baseline_min:.0f} min"
         return r
     r.ratio = r.window_notional / max(r.baseline, cfg.vol_base_floor)
     r.fired = r.ratio >= cfg.burst_ratio and r.window_notional >= cfg.min_burst_notional
@@ -185,17 +180,24 @@ class Whale:
     skip: str | None = None
 
 
-def whale_threshold(baseline_orders, cfg) -> float:
-    """p99 of past order sizes (excluding the window, so a whale never raises its own bar)."""
-    sizes = [o.notional for o in baseline_orders]
-    if len(sizes) < cfg.min_whale_samples:
+def whale_threshold(b, cfg) -> float | None:
+    """Order size that counts as a whale, from a market_baselines row (None without a baseline).
+
+    The baseline's p99 comes from history before now, so a whale never raises its own bar.
+    """
+    if b is None:
+        return None
+    if b.whale_p99 is None or b.whale_orders < cfg.min_whale_samples:
         return cfg.whale_thin
-    p99 = statistics.quantiles(sizes, n=100, method="inclusive")[98]
-    return max(p99, cfg.whale_floor)
+    return max(float(b.whale_p99), cfg.whale_floor)
 
 
-def whale(window_orders, threshold: float) -> Whale:
+def whale(window_orders, threshold: float | None) -> Whale:
+    """`threshold` is whale_threshold(...)."""
     r = Whale(threshold=threshold)
+    if threshold is None:
+        r.skip = "no baseline yet"
+        return r
     if not window_orders:
         r.skip = "no trades in window"
         return r

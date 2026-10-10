@@ -2,12 +2,17 @@
 
 Streams live Kalshi ticker updates (price, bid/ask, sizes, volume) and every
 executed trade (size, price, taker side) for the markets in `KALSHI_SERIES`
-into Postgres, keeping the last 3 hours.
+into Postgres. Live rows are kept for 30 minutes. Before they are deleted, they're
+rolled up into hourly summaries in `market_hourly` (kept 14 days). Each market's
+"normal" lives in `market_baselines`, computed by `python -m baselines`.
 
 - `kalshi.py`: request signing, REST market discovery, WebSocket ticker + trade stream
-- `db.py`: table setup, market upserts, batched price/trade writer, retention
-- `__main__.py`: entry point, loop wiring, shutdown
-- `models/` (repo root): SQLAlchemy models `markets`, `market_prices` and `market_trades`.
+- `__main__.py`: entry point. Discovery plus the session; everything else is shared
+- `ingestion/common/`: shared by every source. `db.py` (table setup, market upserts,
+  batched writer, retention) and `runner.py` (reconnect loop, stats log, Ctrl+C)
+- `models/` (repo root): SQLAlchemy models `markets`, `market_prices`, `market_trades` and `alerts`.
+  Every row has `source = 'kalshi'`; Polymarket workers write the same tables.
+  To recreate the tables after a model change, run `python -m ingestion.reset_db`.
   The tables are created from these models on startup; there are no migrations.
 
 ## Setup
@@ -74,27 +79,29 @@ Open a SQL prompt with
 4. After 5+ minutes, the detector query below returns rows.
 5. `uv run pytest tests/ingestion/kalshi` passes.
 
-## For the alert detector
+## Querying the data
 
-This query gives the 5-minute midpoint change over a 10-minute window. It
-uses only trustworthy quotes:
+The real alerting lives in `alert_detector/` (see `alert_detector/alert_detector.md`).
+For a quick manual look, this query gives the 5-minute midpoint change over a
+10-minute window. It covers every source and uses only trustworthy quotes:
 
 ```sql
 WITH q AS (
-  SELECT market_id, timestamp, (yes_bid + yes_ask) / 2 AS mid
+  SELECT source, market_id, timestamp, (yes_bid + yes_ask) / 2 AS mid
   FROM market_prices
   WHERE timestamp > now() - interval '10 minutes'
     AND yes_bid_size > 0 AND yes_ask_size > 0       -- both sides have real orders
     AND yes_ask - yes_bid <= 0.10                   -- spread narrow enough to trust
 ), latest AS (
-  SELECT DISTINCT ON (market_id) market_id, mid FROM q ORDER BY market_id, timestamp DESC
+  SELECT DISTINCT ON (source, market_id) source, market_id, mid
+  FROM q ORDER BY source, market_id, timestamp DESC
 ), ago AS (
-  SELECT DISTINCT ON (market_id) market_id, mid FROM q
-  WHERE timestamp <= now() - interval '5 minutes' ORDER BY market_id, timestamp DESC
+  SELECT DISTINCT ON (source, market_id) source, market_id, mid FROM q
+  WHERE timestamp <= now() - interval '5 minutes' ORDER BY source, market_id, timestamp DESC
 )
-SELECT m.market_id, m.title, m.event_title, m.category,
+SELECT m.source, m.market_id, m.title, m.event_title, m.category,
        ago.mid AS mid_5m_ago, latest.mid AS mid_now, latest.mid - ago.mid AS change
-FROM latest JOIN ago USING (market_id) JOIN markets m USING (market_id)
+FROM latest JOIN ago USING (source, market_id) JOIN markets m USING (source, market_id)
 WHERE m.status = 'active' AND m.close_time > now() + interval '15 minutes'
 ORDER BY abs(latest.mid - ago.mid) DESC;
 ```
@@ -103,11 +110,12 @@ ORDER BY abs(latest.mid - ago.mid) DESC;
 - Prices run from 0 to 1 and equal the implied chance of YES.
 - `price_or_odds` is the last trade and can be stale, so use the midpoint instead.
 - Markets near close naturally converge to 0 or 1, so the query skips them.
-- Many strikes of one event move together, so group alerts by `event_ticker`.
+- Many strikes of one event move together, so group alerts by `(source, event_id)`.
 
 For the classifier:
 
 ```sql
-SELECT market_id, title, yes_sub_title, rules_primary, event_title, series_title, category, tags
+SELECT source, market_id, title, outcome_label, rules_primary, event_title, series_title,
+       category, tags, url
 FROM markets WHERE status = 'active';
 ```

@@ -9,10 +9,12 @@ from alert_detector import signals as sig
 PRICE_PATH_MIN = 30
 TOP_TRADES = 5
 COOLDOWN_OVERRIDE = 1.5  # a move this many times stronger breaks through the cooldown
+PLATFORMS = {"kalshi": "Kalshi", "polymarket": "Polymarket", "polymarket_us": "Polymarket US"}
 
 
 @dataclass
 class Evaluation:
+    source: str
     market_id: str
     meta: dict
     skip: str | None = None  # market-level exclusion
@@ -25,24 +27,26 @@ class Evaluation:
     candidate: bool = False
     score: float = 0.0
     direction: str | None = None
+    baseline: object = None  # the market_baselines row used, if any
 
 
 class Detector:
     def __init__(self, cfg, state):
         self.cfg = cfg
         self.state = state
-        self.markets: dict[str, dict] = {}  # active market metadata, by market_id
+        self.markets: dict[tuple, dict] = {}  # active market metadata, by (source, market_id)
         self.cooldown: dict[str, tuple[float, float]] = {}  # event key -> (time, score) of last alert
         self.stale = False
         self.evaluated = self.candidates = 0  # counters for the stats log
-        self._cache: dict[tuple, tuple] = {}  # (market_id, kind) -> (minute, value)
+        self.baselines: dict[tuple, object] = {}  # market_baselines rows, by (source, market_id)
 
     # --- Per market -------------------------------------------------------------
-    def evaluate(self, market_id: str, now: float) -> Evaluation | None:
-        meta, buf = self.markets.get(market_id), self.state.markets.get(market_id)
+    def evaluate(self, key: tuple, now: float) -> Evaluation | None:
+        """key = (source, market_id)."""
+        meta, buf = self.markets.get(key), self.state.markets.get(key)
         if meta is None or buf is None:
             return None
-        e = Evaluation(market_id, meta)
+        e = Evaluation(key[0], key[1], meta)
         close = meta.get("close_time")
         if close is None or close.timestamp() <= now + self.cfg.near_close_min * 60:
             # Markets near close converge to 0/1 on their own; settled ones jump there.
@@ -51,19 +55,13 @@ class Detector:
 
         cfg, w = self.cfg, self.cfg.window_s
         self.evaluated += 1
-        # Baselines change slowly, so compute them at most once a minute per market.
-        sigma = self._cached(market_id, "sigma", now,
-                             lambda: sig.compute_sigma(buf.quotes, buf.snapshots, now, cfg))
-        vol_base = self._cached(market_id, "volume", now,
-                                lambda: sig.volume_baseline(buf.trades, buf.first_seen, now, cfg))
-        whale_bar = self._cached(market_id, "whale", now, lambda: sig.whale_threshold(
-            sig.aggregate_orders(sig.trades_between(buf.trades, now - cfg.baseline_s, now - w)), cfg))
-
+        # "Normal" comes from days of history (python -m baselines), not from the live buffer.
+        b = e.baseline = self.baselines.get(key)
         window_trades = sig.trades_between(buf.trades, now - w, now)
         e.window_orders = sig.aggregate_orders(window_trades)
-        e.price = sig.price_move(buf.quotes, buf.snapshots, now, cfg, sigma)
-        e.volume = sig.volume_burst(window_trades, vol_base, cfg)
-        e.whale = sig.whale(e.window_orders, whale_bar)
+        e.price = sig.price_move(buf.quotes, buf.snapshots, now, cfg, sig.baseline_sigma(b, cfg))
+        e.volume = sig.volume_burst(window_trades, sig.baseline_volume(b), cfg)
+        e.whale = sig.whale(e.window_orders, sig.whale_threshold(b, cfg))
         e.imbalance = sig.imbalance(e.window_orders, cfg)
         self._escalate(e)
         return e
@@ -86,25 +84,17 @@ class Detector:
         elif im.side or wh.side:
             e.direction = "yes_up" if (im.side or wh.side) == "yes" else "yes_down"
 
-    def _cached(self, market_id: str, kind: str, now: float, compute):
-        minute = int(now // 60)
-        hit = self._cache.get((market_id, kind))
-        if hit is None or hit[0] != minute:
-            hit = (minute, compute())
-            self._cache[(market_id, kind)] = hit
-        return hit[1]
-
     # --- Across markets -----------------------------------------------------------
-    def process(self, changed: set[str], now: float) -> list[dict]:
-        """Evaluate the markets that just got new rows; return alerts to insert."""
+    def process(self, changed: set[tuple], now: float) -> list[dict]:
+        """Evaluate the (source, market_id)s that just got new rows; return alerts to insert."""
         if now - self.state.latest_ts > self.cfg.stale_s:
             self.stale = True  # ingestion is down: any "move" would be an artifact
             return []
         self.stale = False
 
         groups: dict[str, list[Evaluation]] = {}
-        for market_id in changed:
-            e = self.evaluate(market_id, now)
+        for key in changed:
+            e = self.evaluate(key, now)
             if e and e.candidate:
                 self.candidates += 1
                 groups.setdefault(_event_key(e), []).append(e)
@@ -113,12 +103,12 @@ class Detector:
         for key, group in groups.items():
             # Strikes of one event move together: also check the event's other
             # markets, alert on the strongest, list the rest as related.
-            members = {e.market_id: e for e in group}
-            for market_id, meta in self.markets.items():
-                if market_id not in members and (meta.get("event_ticker") or market_id) == key:
-                    e = self.evaluate(market_id, now)
+            members = {(e.source, e.market_id): e for e in group}
+            for market_key, meta in self.markets.items():
+                if market_key not in members and _event_key_of(market_key, meta) == key:
+                    e = self.evaluate(market_key, now)
                     if e and e.candidate:
-                        members[market_id] = e
+                        members[market_key] = e
             ranked = sorted(members.values(), key=lambda e: e.score, reverse=True)
             best = ranked[0]
 
@@ -131,12 +121,11 @@ class Detector:
 
     def prune(self, now: float) -> None:
         self.state.prune(now)
-        self._cache = {k: v for k, v in self._cache.items() if k[0] in self.state.markets}
 
     # --- Output ----------------------------------------------------------------------
     def build_alert(self, e: Evaluation, related: list[Evaluation], now: float) -> dict:
         pm, vb, wh, im = e.price, e.volume, e.whale, e.imbalance
-        buf = self.state.markets[e.market_id]
+        buf = self.state.markets[(e.source, e.market_id)]
         meta = e.meta
         price_path = []
         for t in range(int(now - PRICE_PATH_MIN * 60), int(now) + 1, 60):
@@ -145,22 +134,30 @@ class Detector:
                 price_path.append({"t": _iso(t), "mid": round(mid, 4)})
         top = sorted(e.window_orders, key=lambda o: o.notional, reverse=True)[:TOP_TRADES]
         context = {
-            "market": {k: meta.get(k) for k in ("title", "yes_sub_title", "rules_primary", "event_title",
+            "market": {k: meta.get(k) for k in ("title", "outcome_label", "rules_primary", "event_title",
                                                  "series_title", "category", "tags")}
-                      | {"close_time": meta["close_time"].isoformat()},
+                      | {"source": e.source, "url": meta.get("url"),
+                         "close_time": meta["close_time"].isoformat()},
             "price_path": price_path,
             "top_trades": [{"t": _iso(o.t), "notional": round(o.notional, 2), "taker_side": o.side,
                             "yes_price": o.yes_price, "is_block_trade": o.is_block} for o in top],
-            "related_markets": [{"market_id": r.market_id, "yes_sub_title": r.meta.get("yes_sub_title"),
+            "related_markets": [{"market_id": r.market_id, "outcome_label": r.meta.get("outcome_label"),
                                  "change_pts": _round(r.price.change, 4), "z_score": _round(r.price.z, 2)}
                                 for r in related],
             "thresholds": {"z_min": self.cfg.z_min, "burst_ratio": self.cfg.burst_ratio,
                            "whale_threshold": _round(wh.threshold, 2)},
+            "baseline": None if e.baseline is None else {  # the "normal" this move was judged against
+                "computed_at": e.baseline.computed_at.isoformat(), "method": e.baseline.method,
+                "typical_5m_move": _round(_float(e.baseline.sigma_5m), 4),
+                "normal_volume_per_5m": _round(_float(e.baseline.volume_per_window), 2),
+                "history_hours": _round(_float(e.baseline.history_minutes) / 60, 1),
+                "whale_p99": _round(_float(e.baseline.whale_p99), 2)},
         }
         return {
+            "source": e.source,
             "market_id": e.market_id,
-            "event_ticker": meta.get("event_ticker"),
-            "series": meta.get("series"),
+            "event_id": meta.get("event_id"),
+            "series_id": meta.get("series_id"),
             "direction": e.direction or "yes_up",
             "reasons": e.reasons,
             "score": _dec(e.score, 4),
@@ -186,9 +183,9 @@ class Detector:
 def summarize(e: Evaluation, window_min: float) -> str:
     """One plain sentence for the LLM, e.g. 'X: YES rose from 0.42 to 0.61 (+19 pts, z=4.1) in 5 min ...'."""
     pm, vb, wh, im = e.price, e.volume, e.whale, e.imbalance
-    name = e.meta.get("title") or e.market_id
-    if e.meta.get("yes_sub_title"):
-        name += f" ({e.meta['yes_sub_title']})"
+    name = f"[{PLATFORMS.get(e.source, e.source)}] " + (e.meta.get("title") or e.market_id)
+    if e.meta.get("outcome_label"):
+        name += f" ({e.meta['outcome_label']})"
     if pm.change:
         verb = "rose" if pm.change > 0 else "fell"
         text = f"YES {verb} from {pm.mid_before:.3f} to {pm.mid_now:.3f} ({pm.change * 100:+.1f} pts"
@@ -212,7 +209,13 @@ def summarize(e: Evaluation, window_min: float) -> str:
 
 
 def _event_key(e: Evaluation) -> str:
-    return e.meta.get("event_ticker") or e.market_id
+    return _event_key_of((e.source, e.market_id), e.meta)
+
+
+def _event_key_of(key: tuple, meta: dict) -> str:
+    """Grouping/cooldown key. An event never spans sources."""
+    source, market_id = key
+    return f"{source}:{meta.get('event_id') or market_id}"
 
 
 def _money(x: float) -> str:
@@ -229,3 +232,7 @@ def _round(x, places):
 
 def _dec(x, places) -> Decimal | None:
     return None if x is None else Decimal(str(round(x, places)))
+
+
+def _float(x) -> float | None:
+    return None if x is None else float(x)
