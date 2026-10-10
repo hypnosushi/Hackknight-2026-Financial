@@ -224,3 +224,6 @@ __marimo__/
 
 # Kalshi API private keys
 *.pem
+
+# Claude Code agent worktrees
+.claude/worktrees/
