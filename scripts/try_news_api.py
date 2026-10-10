@@ -65,7 +65,7 @@ def main() -> None:
     api_key = get_api_key()
     gateway = NewsApiGateway(api_key=api_key)
 
-    filters = NewsQueryFilters(keyword_query="nvidia", language="en", page_size=3)
+    filters = NewsQueryFilters(keyword_query="nvidia", language="en", page_size=2)
     entities = [
         EntityAlias(symbol="NVDA", aliases=["Nvidia", "Nvidia Corporation"]),
     ]
@@ -82,9 +82,13 @@ def main() -> None:
 
     for item in items:
         print(f"- {item.title}")
-        print(f"  entities: {item.entities or '(none matched)'}")
-        print(f"  published: {item.published_at}")
-        print(f"  url: {item.url}")
+        print(f"  source:       {item.source}")
+        print(f"  id:           {item.id}")
+        print(f"  author:       {item.author}")
+        print(f"  text:         {item.text}")
+        print(f"  entities:     {item.entities or '(none matched)'}")
+        print(f"  url:          {item.url}")
+        print(f"  published_at: {item.published_at}")
         print()
 
 
