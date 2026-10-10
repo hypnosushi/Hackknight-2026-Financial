@@ -19,10 +19,10 @@ This feature replaces the deleted `new_specs/company-network.md` and answers its
 | F2 SEC client | Done |
 | F3 Filing trimmer | Done |
 | F4 Relationship extractor | Done |
-| F5 Link finder | Not started, unblocked |
+| F5 Link finder | Done (live check not yet run) |
 | F6 News events | Done |
 | F7 Prediction market events | Done |
-| F8 Highlight builder | Not started, waits on F5 to F7 |
+| F8 Highlight builder | Not started, unblocked |
 | F9 Graph API | Not started, waits on F5, F8 and the FastAPI decision |
 | F10 Graph page | Done (works in fake mode) |
 | F11 Demo tools | Not started, waits on F9 |
@@ -159,13 +159,12 @@ The result is called a highlight, not a signal, because `alert_detector/signals.
 
 | Step | Feature | Waits on |
 | --- | --- | --- |
-| Done | F0, F1, F2, F3, F4, F6, F7, F10 | |
-| 1 | F5 Link finder | Nothing |
-| 2 | F8 Highlight builder | F5 |
-| 3 | F9 Graph API | F5, F8, and the FastAPI decision |
-| 4 | F11 Demo tools | F9 |
+| Done | F0 to F7, F10 | |
+| 1 | F8 Highlight builder | Nothing |
+| 2 | F9 Graph API | F8 and the FastAPI decision |
+| 3 | F11 Demo tools | F9 |
 
-The fastest way to a real (not fake-mode) page is F5, then F9 with highlights left empty; F8 can follow.
+The fastest way to a real (not fake-mode) page is F9 with highlights left empty; F8 can follow.
 
 ---
 
@@ -240,7 +239,9 @@ The fastest way to a real (not fake-mode) page is F5, then F9 with highlights le
 
 ## F5. Link finder
 
-**Status:** not started, unblocked. See "Conventions the next features rely on" in `company_graph/company_graph.md`. **File:** `company_graph/links.py`
+**Status:** done; the live check is an opt-in test not yet run. **File:** `company_graph/links.py`
+
+**As built:** links are stored from the filer's side, so read them with `read_links`, which flips reverse-lookup rows. Subjects in a company's own filings are found with F7's `find_companies`, so non-US counterparties named only there (such as CATL) are missed. 8-Ks are fetched and kept only if they show Item 1.01 or 2.01.
 
 **Build:** `build_links(symbol)` that
 1. Marks `graph_link_runs` as `running`. Skips the run when the last one is `done` and newer than `GRAPH_LINK_TTL_DAYS`.
@@ -289,7 +290,7 @@ Do not compare odds yourself. `market_prices` keeps only 30 minutes of rows, and
 
 ## F8. Highlight builder
 
-**Status:** not started, waits on F5 to F7. **File:** `company_graph/highlights.py`
+**Status:** not started, unblocked. Read links with `links.read_links`. **File:** `company_graph/highlights.py`
 
 **Build:** `build_highlights(symbol)` that
 1. Loads the company's links, then the `graph_events` rows from the last `GRAPH_EVENT_WINDOW_DAYS` for the company and each linked company.

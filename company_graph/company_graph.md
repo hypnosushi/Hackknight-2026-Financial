@@ -16,9 +16,10 @@ Spec: `new_specs/ingestion/company-graph-tasks.md`.
 | `config.py`, `db.py`, `schemas.py`, `fixtures/` | F0 | Settings, tables, API shape, fake-mode data |
 | `llm.py`, `extract.py` | F4 | `complete` over the team's `complete_structured`; `extract` reads one passage for a relationship; `save_relationship` validates and upserts into `entity_relationships` |
 | `news_events.py` | F6 | One NewsAPI request per graph, Jev event typing, saved to `graph_events`. Entry point: `refresh_news_events` |
+| `links.py` | F5 | `build_links(symbol)`: own 10-K, reverse full-text search, recent 8-Ks, sector fallback, into `entity_relationships`; `read_links` and `get_link_run` for the API |
 | `market_events.py` | F7 | Recent `alerts` (read-only) matched to the companies their markets name, saved to `graph_events` and `market_entities`. Entry point: `fetch_market_events` |
 
-Not built yet: link finder (F5), highlight builder (F8), API (F9) and demo commands (F11).
+Not built yet: highlight builder (F8), API (F9) and demo commands (F11).
 
 ### Conventions the next features rely on
 
@@ -28,7 +29,10 @@ Not built yet: link finder (F5), highlight builder (F8), API (F9) and demo comma
 - **News cache (F6):** results per company, the daily request budget and Jev labels live in `.cache/company_graph/news_cache.json`. Deleting it only costs a few repeated requests. The budget lock covers one process.
 - **Market names (F7):** a market names a company only through its full name or a cashtag (`$TSLA`); bare tickers and common words never match. Names whose SEC form has extra words (Palantir, Uber, Disney, Ford, Delta) are missed unless added to `backend/entities/data/sp500_top50.json`.
 - **Sync calls:** `llm.complete`, `extract.extract` and Jev are synchronous. Call them through `asyncio.to_thread`.
-- **Saving:** every save function flushes and leaves the commit to the caller.
+- **Saving:** every save function flushes and leaves the commit to the caller. The exception is `build_links`, which commits as it goes so pollers see progress: give it its own session.
+- **Reading links (F5):** call `links.read_links(session, symbol, cfg.graph_max_linked)`, never a plain `entity_symbol = symbol` query. Reverse-lookup links are stored from the other company's side and `read_links` flips them.
+- **Run status (F5):** a timeout ends `done` with what was saved. A run that saved nothing and hit any failure ends `error`, so an outage is not cached for the TTL. A `running` row older than 10 minutes counts as crashed.
+- **Processed filings (F5):** own filings are keyed by accession number; reverse reads by `accession#SYMBOL`, so one big 10-K can serve several companies' graphs.
 
 ## Setup
 
@@ -48,6 +52,12 @@ To check the extractor against the real model (it costs a few model calls):
 
 ```
 GRAPH_LIVE_EVAL=1 uv run pytest tests/company_graph/test_extract.py -k live
+```
+
+To check a full link run against SEC, the model and the team database (writes only `entities`, `entity_relationships` and the `graph_` tables):
+
+```
+GRAPH_LIVE_EVAL=1 uv run pytest tests/company_graph/test_links.py -k live
 ```
 
 ## Tables
