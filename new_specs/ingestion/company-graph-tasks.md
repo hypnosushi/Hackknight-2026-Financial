@@ -23,7 +23,7 @@ This feature replaces the deleted `new_specs/company-network.md` and answers its
 | F6 News events | Done |
 | F7 Prediction market events | Done |
 | F8 Highlight builder | Not started, unblocked |
-| F9 Graph API | Not started, waits on F5, F8 and the FastAPI decision |
+| F9 Graph API | Not started, unblocked (can ship before F8, with highlights empty) |
 | F10 Graph page | Done (works in fake mode) |
 | F11 Demo tools | Not started, waits on F9 |
 
@@ -59,7 +59,6 @@ Owners are taken from git history.
 
 ## What does not exist yet
 
-- A FastAPI app. `fastapi` is not in `pyproject.toml`, and `architecture/tech-stack.md` only plans `backend/api/`.
 - Redis, pub/sub, or a WebSocket server. The page polls instead.
 - The `messages` and `message_entities` tables from `db-design.md`. This feature does not need them.
 - `contracts/`, `CLAUDE.md`, migrations.
@@ -68,7 +67,7 @@ Owners are taken from git history.
 
 | Decision | Blocks | Status |
 | --- | --- | --- |
-| Who creates the FastAPI app, and at what path? | F9 | **Open.** Default: F9 ships a router only, and whoever creates the app adds one `include_router` line. |
+| Who creates the FastAPI app, and at what path? | F9 | Resolved: ShabirZ added it. The app is `backend/main.py` (run with `uv run uvicorn backend.main:app --reload`), with one router per area in `backend/api/` (see `new_specs/fastapi.md`). It has no CORS yet. |
 | Is anyone else adding the `entities` model? | F0 | Resolved: F0 added it. |
 | May `entity_relationships` gain `summary` and `evidence_url`? | F0 | Resolved: added, and `db-design.md` updated. |
 | Which LLM provider? Who builds Jev? | F4, F6, F8 | Resolved: OpenRouter through `backend/llm`; Jev is `backend/classification`. |
@@ -161,7 +160,7 @@ The result is called a highlight, not a signal, because `alert_detector/signals.
 | --- | --- | --- |
 | Done | F0 to F7, F10 | |
 | 1 | F8 Highlight builder | Nothing |
-| 2 | F9 Graph API | F8 and the FastAPI decision |
+| 2 | F9 Graph API | Nothing (highlights stay empty until F8) |
 | 3 | F11 Demo tools | F9 |
 
 The fastest way to a real (not fake-mode) page is F9 with highlights left empty; F8 can follow.
@@ -303,7 +302,7 @@ Do not compare odds yourself. `market_prices` keeps only 30 minutes of rows, and
 
 ## F9. Graph API
 
-**Status:** not started, waits on F5, F8 and the FastAPI decision. No FastAPI app exists yet. **File:** `company_graph/api.py`
+**Status:** not started, unblocked. The team's app is `backend/main.py`; routers live in `backend/api/` (see `new_specs/fastapi.md`). **File:** `company_graph/api.py`
 
 **Build:**
 - `router = APIRouter()` with `GET /graph/{ticker}` and `GET /companies/search`.
@@ -311,7 +310,7 @@ Do not compare odds yourself. `market_prices` keeps only 30 minutes of rows, and
 - Return `schemas.GraphResponse`, so the shape always matches the page.
 - With `GRAPH_FAKE=1`, serve `schemas.load_fixture(ticker)` (an empty `done` graph for unknown tickers) and call nothing else.
 - Allow the frontend's origin (CORS): the page runs on port 5173 and the API on 8000.
-- Do not create the app's main file unless the team agreed that you own it. `fastapi` and `uvicorn` are added to `pyproject.toml` in the separate dependency pull request.
+- Mounting needs two small edits to ShabirZ's `backend/main.py`, agreed with him first: one `app.include_router(...)` line, and CORS middleware allowing the frontend's origin (`http://localhost:5173`), which the app does not have yet. `fastapi` is already a dependency.
 
 **Done when:** tests using FastAPI's test client, with the router mounted on a throwaway app, show that a first request returns `running`, a later one returns `done` with links, and fake mode works with no database and no network.
 
