@@ -4,7 +4,7 @@ Runs next to the pollers and never blocks them: pollers only write `markets`, th
 Run from the repo root:
 
     uv run python -m backend.enrichment          # keep running: new markets within a sweep
-    uv run python -m backend.enrichment --once   # one batch, then exit
+    uv run python -m backend.enrichment --once   # one batch of ENRICH_BATCH events, then exit
 """
 
 import argparse
@@ -20,7 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from backend.classification import JevError
 from backend.enrichment import db
-from backend.enrichment.enrich import enrich_market
+from backend.enrichment.enrich import enrich_event
 from backend.entities import EntityMap, load_entity_map
 
 log = logging.getLogger("enrichment")
@@ -28,33 +28,41 @@ log = logging.getLogger("enrichment")
 
 async def sweep(engine, entity_map: EntityMap, batch: int, concurrency: int, threshold: float,
                 category_threshold: float) -> int:
-    """Enrich one batch of markets. Returns how many were picked up."""
-    markets = await db.markets_to_enrich(engine, entity_map.version, batch)
-    if not markets:
+    """Enrich up to `batch` events. Returns how many were picked up."""
+    events = await db.events_to_enrich(engine, entity_map.version, batch)
+    if not events:
         return 0
-    await db.mark_pending(engine, markets)
+    await db.mark_pending(engine, [m for markets in events for m in markets])
     started = time.time()
-    done, failed = Counter(), Counter()
+    jev, copied, failed = Counter(), Counter(), Counter()
     slots = asyncio.Semaphore(concurrency)
 
-    async def one(market: dict) -> None:
-        source, market_id = market["source"], market["market_id"]
-        async with slots:
-            try:
-                symbols = await asyncio.to_thread(enrich_market, market, entity_map, threshold, category_threshold)
-            except (JevError, ValueError) as e:
-                failed[source] += 1
-                log.warning("Enrichment failed for %s %s: %s", source, market_id, e)
-                await db.save_failure(engine, source, market_id, str(e), entity_map.version)
-                return
-        await db.save_result(engine, source, market_id, symbols, entity_map)
-        done[source] += 1
+    async def one(markets: list[dict]) -> None:
+        source, event_id = markets[0]["source"], markets[0]["event_id"]
+        market_ids = [m["market_id"] for m in markets]
+        symbols = await db.sibling_tags(engine, source, event_id, entity_map) if event_id else None
+        if symbols is not None:
+            copied[source] += len(markets)
+        else:
+            async with slots:
+                try:
+                    symbols = await asyncio.to_thread(enrich_event, markets, entity_map, threshold,
+                                                      category_threshold)
+                except (JevError, ValueError) as e:
+                    failed[source] += len(markets)
+                    log.warning("Enrichment failed for %s event %s: %s", source, event_id or market_ids[0], e)
+                    await db.save_failure(engine, source, market_ids, str(e), entity_map.version)
+                    return
+            jev[source] += len(markets)
+        await db.save_result(engine, source, market_ids, symbols, entity_map)
 
-    log.info("Enriching %d markets (%s)", len(markets),
-             ", ".join(f"{s} {n}" for s, n in sorted(Counter(m["source"] for m in markets).items())))
-    await asyncio.gather(*(one(m) for m in markets))
-    log.info("Enriched: %s; failed: %s; took %.0fs", dict(done) or 0, dict(failed) or 0, time.time() - started)
-    return len(markets)
+    n_markets = sum(len(markets) for markets in events)
+    log.info("Enriching %d events, %d markets (%s)", len(events), n_markets,
+             ", ".join(f"{s} {n}" for s, n in sorted(Counter(m[0]["source"] for m in events).items())))
+    await asyncio.gather(*(one(markets) for markets in events))
+    log.info("Markets tagged by Jev: %s; copied from their event: %s; failed: %s; took %.0fs",
+             dict(jev) or 0, dict(copied) or 0, dict(failed) or 0, time.time() - started)
+    return len(events)
 
 
 async def main(once: bool) -> None:

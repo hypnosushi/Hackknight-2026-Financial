@@ -1,4 +1,4 @@
-"""Postgres for market enrichment: the entity map in `entities`, which markets need enriching,
+"""Postgres for market enrichment: the entity map in `entities`, which events need enriching,
 saving results to `market_entities` and `market_enrichment`, and the search API's reads.
 
 Importing the model modules below registers their tables on the shared Base.metadata, so the
@@ -19,13 +19,15 @@ from backend.models.entity import Entity
 from backend.models.market_enrichment import MarketEnrichment
 from backend.models.market_entity import MarketEntity
 
-__all__ = ["connect", "sync_entity_map", "markets_to_enrich", "mark_pending", "save_result", "save_failure",
-           "autocomplete", "get_entity", "markets_for_entity"]
+__all__ = ["connect", "sync_entity_map", "events_to_enrich", "sibling_tags", "mark_pending", "save_result",
+           "save_failure", "autocomplete", "get_entity", "markets_for_entity"]
 
 MAX_ATTEMPTS = 3  # failures in a row under one map version before a market is left alone
 ERROR_MAX_CHARS = 500
 MARKET_COLUMNS = (Market.source, Market.market_id, Market.title, Market.outcome_label, Market.rules_primary,
-                  Market.event_title, Market.series_title, Market.category, Market.tags)
+                  Market.event_id, Market.event_title, Market.series_title, Market.category, Market.tags)
+# Markets are enriched per event; a market without an event is its own.
+EVENT_KEY = func.coalesce(Market.event_id, Market.market_id)
 
 
 async def sync_entity_map(engine: AsyncEngine, entity_map: EntityMap) -> None:
@@ -42,20 +44,59 @@ async def sync_entity_map(engine: AsyncEngine, entity_map: EntityMap) -> None:
             await conn.execute(CreateIndex(index, if_not_exists=True))
 
 
-async def markets_to_enrich(engine: AsyncEngine, map_version: int, limit: int) -> list[dict]:
-    """Active markets never enriched, left pending, enriched under an older map version, or
-    failed fewer than MAX_ATTEMPTS times under this one. Never-seen markets come first.
+def _needs_enrichment(map_version: int):
+    """Never enriched, left pending, enriched under an older map version, or failed fewer
+    than MAX_ATTEMPTS times under this one. Use with an outer join to market_enrichment.
     """
     e = MarketEnrichment
-    needs = or_(e.status.is_(None), e.status == "pending", e.map_version < map_version,
-                (e.status == "failed") & (e.attempts < MAX_ATTEMPTS))
-    query = (select(*MARKET_COLUMNS)
-             .outerjoin(e, (e.source == Market.source) & (e.market_id == Market.market_id))
-             .where(Market.status == "active", Market.series_id.is_distinct_from(DEMO_SERIES), needs)
-             .order_by(e.status.is_(None).desc(), Market.updated_at.desc())
-             .limit(limit))
+    return or_(e.status.is_(None), e.status == "pending", e.map_version < map_version,
+               (e.status == "failed") & (e.attempts < MAX_ATTEMPTS))
+
+
+async def events_to_enrich(engine: AsyncEngine, map_version: int, limit: int) -> list[list[dict]]:
+    """Up to `limit` events with active markets that need enriching, each as the list of those
+    markets. Events with never-seen markets come first. An event is never split across batches.
+    """
+    e = MarketEnrichment
+    joined = (e.source == Market.source) & (e.market_id == Market.market_id)
+    wanted = (Market.status == "active", Market.series_id.is_distinct_from(DEMO_SERIES), _needs_enrichment(map_version))
+    events = (select(Market.source, EVENT_KEY.label("event_key"))
+              .outerjoin(e, joined).where(*wanted)
+              .group_by(Market.source, EVENT_KEY)
+              .order_by(func.bool_or(e.status.is_(None)).desc(), func.max(Market.updated_at).desc())
+              .limit(limit)
+              .subquery())
+    query = (select(*MARKET_COLUMNS, events.c.event_key)
+             .outerjoin(e, joined)
+             .join(events, (events.c.source == Market.source) & (events.c.event_key == EVENT_KEY))
+             .where(*wanted)
+             .order_by(Market.source, events.c.event_key, Market.market_id))
     async with engine.connect() as conn:
-        return [dict(r._mapping) for r in await conn.execute(query)]
+        rows = [dict(r._mapping) for r in await conn.execute(query)]
+    grouped: dict[tuple[str, str], list[dict]] = {}
+    for row in rows:
+        grouped.setdefault((row["source"], row.pop("event_key")), []).append(row)
+    return list(grouped.values())
+
+
+async def sibling_tags(engine: AsyncEngine, source: str, event_id: str, entity_map: EntityMap) -> list[str] | None:
+    """The map tags of a market in this event already enriched under this map version, or None
+    if there is none. A market added to a tagged event (a new strike) copies these, with no Jev call.
+    """
+    e = MarketEnrichment
+    done = (select(e.market_id)
+            .join(Market, (Market.source == e.source) & (Market.market_id == e.market_id))
+            .where(Market.source == source, Market.event_id == event_id, e.status == "done",
+                   e.map_version == entity_map.version)
+            .limit(1))
+    async with engine.connect() as conn:
+        market_id = (await conn.execute(done)).scalar()
+        if market_id is None:
+            return None
+        tags = await conn.execute(select(MarketEntity.entity_symbol).where(
+            MarketEntity.source == source, MarketEntity.market_id == market_id,
+            MarketEntity.entity_symbol.in_(entity_map.symbols)))
+        return list(tags.scalars())
 
 
 async def mark_pending(engine: AsyncEngine, markets: list[dict]) -> None:
@@ -69,9 +110,9 @@ async def mark_pending(engine: AsyncEngine, markets: list[dict]) -> None:
                                                       set_={"status": "pending"}))
 
 
-async def save_result(engine: AsyncEngine, source: str, market_id: str, symbols: list[str],
+async def save_result(engine: AsyncEngine, source: str, market_ids: list[str], symbols: list[str],
                       entity_map: EntityMap) -> None:
-    """Replace this market's map-entity links with `symbols` and mark it done, in one transaction.
+    """Give these markets (one event's) exactly `symbols` as map tags and mark them done, in one transaction.
 
     Only links to map entities are replaced: company_graph's F7 also writes `market_entities`,
     for companies that may not be in the map, and those rows are not this worker's to delete.
@@ -79,23 +120,25 @@ async def save_result(engine: AsyncEngine, source: str, market_id: str, symbols:
     now = datetime.now(timezone.utc)
     async with engine.begin() as conn:
         await conn.execute(delete(MarketEntity).where(
-            MarketEntity.source == source, MarketEntity.market_id == market_id,
+            MarketEntity.source == source, MarketEntity.market_id.in_(market_ids),
             MarketEntity.entity_symbol.in_(entity_map.symbols)))
         if symbols:
             await conn.execute(pg_insert(MarketEntity).values(
-                [{"source": source, "market_id": market_id, "entity_symbol": s} for s in dict.fromkeys(symbols)]
+                [{"source": source, "market_id": m, "entity_symbol": s}
+                 for m in market_ids for s in dict.fromkeys(symbols)]
             ).on_conflict_do_nothing())
         values = {"status": "done", "map_version": entity_map.version, "attempts": 0, "enriched_at": now,
                   "error": None}
-        stmt = pg_insert(MarketEnrichment).values(source=source, market_id=market_id, **values)
+        stmt = pg_insert(MarketEnrichment).values([{"source": source, "market_id": m, **values} for m in market_ids])
         await conn.execute(stmt.on_conflict_do_update(index_elements=["source", "market_id"], set_=values))
 
 
-async def save_failure(engine: AsyncEngine, source: str, market_id: str, error: str, map_version: int) -> None:
-    """Mark a market failed. Its earlier links stay; `attempts` counts failures under this map version."""
+async def save_failure(engine: AsyncEngine, source: str, market_ids: list[str], error: str,
+                       map_version: int) -> None:
+    """Mark these markets failed. Earlier links stay; `attempts` counts failures under this map version."""
     e = MarketEnrichment
-    stmt = pg_insert(e).values(source=source, market_id=market_id, status="failed", map_version=map_version,
-                               attempts=1, error=error[:ERROR_MAX_CHARS])
+    stmt = pg_insert(e).values([{"source": source, "market_id": m, "status": "failed", "map_version": map_version,
+                                 "attempts": 1, "error": error[:ERROR_MAX_CHARS]} for m in market_ids])
     stmt = stmt.on_conflict_do_update(index_elements=["source", "market_id"], set_={
         "status": "failed",
         "attempts": case((e.map_version == map_version, e.attempts + 1), else_=1),

@@ -72,7 +72,13 @@ markets and entities.
 - The seed file carries a `map_version`. Each enrichment records the
   version it ran under; when the version is bumped, the worker
   re-enriches only markets with an older `map_version`.
-- Two-pass enrichment per market, both through
+- Enrichment is per event, not per market: an event is one question with one
+  resolution date, and its markets are the yes/no contracts in it (strikes,
+  ranges, candidates). One Jev run tags the event and every market in it gets
+  the same tags; a market added later to a tagged event copies them. This keeps
+  Jev cost proportional to events (~1,600 across the followed Kalshi categories)
+  rather than markets (~19,000).
+- Two-pass enrichment per event, both through
   `backend.classification.classify` in `multi_select` mode:
   1. Jev picks which of the 6 categories apply.
   2. For each chosen category, Jev picks which entities apply from that
