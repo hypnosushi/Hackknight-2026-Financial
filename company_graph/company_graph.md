@@ -20,7 +20,9 @@ highlight builder (F8), API (F9) and demo commands (F11).
 
 ## Setup
 
-Add to `.env` (see `.env.example` for the shared keys):
+Add to `.env` (see `.env.example` for the shared keys and the company graph block).
+Note: `.env.example` names the OpenRouter key `OPENROUTER_API_KEY`, but `backend/llm/client.py`
+and `backend/classification/jev_client.py` read `OPENROUTER`, so set `OPENROUTER` until that is fixed.
 
 ```
 DATABASE_URL=postgresql://...        # the team database
