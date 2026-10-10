@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 from sqlalchemy import insert, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from ingestion.common.db import connect  # same engine setup; creates any missing tables (incl. alerts)
-from models import Alert, Market, MarketBaseline, MarketPrice, MarketTrade
+from backend.ingestion.common.db import connect  # same engine setup; creates any missing tables (incl. alerts)
+from backend.models import Alert, Market, MarketBaseline, MarketPrice, MarketTrade
 
 __all__ = ["connect", "load_initial", "poll_new", "load_markets", "load_baselines", "recent_alerts",
            "insert_alert"]

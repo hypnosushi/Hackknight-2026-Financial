@@ -21,7 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from entities import load_entities  # noqa: E402
-from ingestion.news_api import (  # noqa: E402
+from backend.ingestion.news_api import (  # noqa: E402
     NewsApiError,
     NewsApiGateway,
     NewsQueryFilters,

@@ -7,8 +7,8 @@ from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from ingestion.common.db import DEMO_SERIES, connect
-from models import Market, MarketBaseline, MarketHourly
+from backend.ingestion.common.db import DEMO_SERIES, connect
+from backend.models import Market, MarketBaseline, MarketHourly
 
 __all__ = ["connect", "markets_needing_baselines", "hourly_rows", "upsert_baseline"]
 
