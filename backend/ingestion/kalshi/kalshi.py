@@ -21,6 +21,8 @@ REST_URL = "https://external-api.kalshi.com/trade-api/v2"
 WS_URL = "wss://external-api-ws.kalshi.com/trade-api/ws/v2"
 WS_PATH = "/trade-api/ws/v2"
 DISCOVERY_INTERVAL_S = 5 * 60
+PAGE_PAUSE_S = 0.25  # between REST pages; Kalshi answers 429 to fast paging
+RETRY_429 = 5  # 429 retries per request, backing off 1, 2, 4... s
 
 
 # --- Signing ------------------------------------------------------------------
@@ -52,20 +54,56 @@ def auth_headers(key_id: str, private_key) -> dict:
 
 
 # --- REST discovery -----------------------------------------------------------
+async def _get(client: httpx.AsyncClient, path: str, params: dict | None = None) -> dict:
+    """GET with backoff on 429 (rate limited)."""
+    for attempt in range(RETRY_429 + 1):
+        resp = await client.get(path, params=params)
+        if resp.status_code != 429 or attempt == RETRY_429:
+            break
+        await asyncio.sleep(2 ** attempt)
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def _paginate(client: httpx.AsyncClient, path: str, key: str, params: dict) -> list[dict]:
     items, cursor = [], ""
     while True:
-        resp = await client.get(path, params={**params, "cursor": cursor})
-        resp.raise_for_status()
-        data = resp.json()
+        data = await _get(client, path, {**params, "cursor": cursor})
         items += data.get(key) or []
         cursor = data.get("cursor") or ""
         if not cursor:
             return items
+        await asyncio.sleep(PAGE_PAUSE_S)
 
 
 def _parse_time(iso: str | None) -> datetime | None:
     return datetime.fromisoformat(iso.replace("Z", "+00:00")) if iso else None
+
+
+def _volume_24h(m: dict) -> float:
+    try:
+        return float(m.get("volume_24h_fp") or m.get("volume_24h") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def market_row(m: dict, event: dict, series: str, info: dict) -> dict:
+    """One `markets` row (plus `volume_24h`, used to pick which markets to stream)."""
+    return {
+        "market_id": m["ticker"],
+        "title": m.get("title"),
+        "outcome_label": m.get("yes_sub_title"),
+        "rules_primary": m.get("rules_primary"),
+        "event_id": m.get("event_ticker"),
+        "event_title": event.get("title"),
+        "series_id": series,
+        "series_title": info.get("title"),
+        "category": event.get("category") or info.get("category"),
+        "tags": info.get("tags") or [],
+        "close_time": _parse_time(m.get("close_time")),
+        "url": f"https://kalshi.com/markets/{series.lower()}",
+        "volume_24h": _volume_24h(m),
+    }
 
 
 async def discover_series(client: httpx.AsyncClient, series: str) -> list[dict]:
@@ -74,29 +112,38 @@ async def discover_series(client: httpx.AsyncClient, series: str) -> list[dict]:
                               {"series_ticker": series, "status": "open", "limit": 1000})
     events = await _paginate(client, "/events", "events",
                              {"series_ticker": series, "status": "open", "limit": 200})
-    resp = await client.get(f"/series/{series}")
-    resp.raise_for_status()
-    info = resp.json().get("series") or {}
+    info = (await _get(client, f"/series/{series}")).get("series") or {}
 
     events_by_ticker = {e["event_ticker"]: e for e in events}
-    rows = []
-    for m in markets:
-        event = events_by_ticker.get(m.get("event_ticker"), {})
-        rows.append({
-            "market_id": m["ticker"],
-            "title": m.get("title"),
-            "outcome_label": m.get("yes_sub_title"),
-            "rules_primary": m.get("rules_primary"),
-            "event_id": m.get("event_ticker"),
-            "event_title": event.get("title"),
-            "series_id": series,
-            "series_title": info.get("title"),
-            "category": event.get("category") or info.get("category"),
-            "tags": info.get("tags") or [],
-            "close_time": _parse_time(m.get("close_time")),
-            "url": f"https://kalshi.com/markets/{series.lower()}",
-        })
-    return rows
+    return [market_row(m, events_by_ticker.get(m.get("event_ticker"), {}), series, info) for m in markets]
+
+
+async def discover_categories(client: httpx.AsyncClient, categories: list[str], series: list[str]) -> list[dict]:
+    """Open markets of every open event in these Kalshi categories (e.g. 'Economics'), plus
+    any event of these series. Pages through all open events (~75 pages), so it costs the
+    same however many categories are followed.
+    """
+    events = await _paginate(client, "/events", "events",
+                             {"status": "open", "with_nested_markets": "true", "limit": 200})
+    wanted_series = set(series)
+    events = [e for e in events if e.get("category") in categories or e.get("series_ticker") in wanted_series]
+
+    info: dict[str, dict] = {}
+    for category in categories:  # one request each: the endpoint returns the whole category
+        for s in (await _get(client, "/series", {"category": category})).get("series") or []:
+            info[s["ticker"]] = s
+    for s in wanted_series - info.keys():
+        info[s] = (await _get(client, f"/series/{s}")).get("series") or {}
+
+    return [market_row(m, e, e["series_ticker"], info.get(e["series_ticker"], {}))
+            for e in events for m in e.get("markets") or [] if m.get("status") == "active"]
+
+
+def top_by_volume(rows: list[dict], limit: int, now: float) -> set[str]:
+    """Tickers of the `limit` most-traded (24h) markets that haven't reached their close time."""
+    live = [r for r in rows if r["close_time"] and r["close_time"].timestamp() > now]
+    live.sort(key=lambda r: r["volume_24h"], reverse=True)
+    return {r["market_id"] for r in live[:limit]}
 
 
 # --- Ticker parsing -----------------------------------------------------------

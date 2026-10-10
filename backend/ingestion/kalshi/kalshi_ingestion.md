@@ -1,8 +1,9 @@
 # Kalshi → Postgres worker
 
 Streams live Kalshi ticker updates (price, bid/ask, sizes, volume) and every
-executed trade (size, price, taker side) for the markets in `KALSHI_SERIES`
-into Postgres. Live rows are kept for 30 minutes. Before they are deleted, they're
+executed trade (size, price, taker side) for the most-traded markets in
+`KALSHI_CATEGORIES` (and `KALSHI_SERIES`) into Postgres. Every open market in them is
+stored in `markets`, so search and enrichment see all of them. Live rows are kept for 30 minutes. Before they are deleted, they're
 rolled up into hourly summaries in `market_hourly` (kept 14 days). Each market's
 "normal" lives in `market_baselines`, computed by `python -m baselines`.
 
@@ -29,7 +30,9 @@ rolled up into hourly summaries in `market_hourly` (kept 14 days). Each market's
    | `DATABASE_URL` | Postgres URL, e.g. `postgresql://postgres:<pw>@localhost:5432/hackknight` |
    | `KALSHI_API_KEY_ID` | Kalshi API key ID |
    | `KALSHI_PRIVATE_KEY_PATH` | PEM file path (default `kalshi_key.pem`) |
-   | `KALSHI_SERIES` | Series to follow, e.g. `KXHIGHNY,KXBTCD` |
+   | `KALSHI_CATEGORIES` | Kalshi categories to follow, e.g. `Economics,Financials,Companies` |
+   | `KALSHI_MAX_MARKETS` | How many markets get live prices: the top N by 24h volume (default 1000) |
+   | `KALSHI_SERIES` | Extra series to follow, e.g. `KXHIGHNY,KXBTCD`. Alone, only these are followed |
 
 3. Install dependencies: `uv sync`
 
@@ -44,7 +47,7 @@ uv run python -m backend.ingestion.kalshi
 When it's working, the log shows these lines:
 
 ```
-... INFO ingestion.kalshi: Following 180 markets across KXHIGHNY, KXBTCD
+... INFO ingestion.kalshi: Stored 19272 open markets across Economics, ...; streaming the top 1000 by 24h volume
 ... INFO ingestion.kalshi.kalshi: WebSocket connected
 ... INFO ingestion.kalshi: Rows written in the last minute: 454 prices, 79 trades (queued: 0)
 ```
@@ -54,8 +57,13 @@ Ctrl+C writes out whatever is still queued, then exits.
 How it behaves:
 
 - **Discovery.** Runs at startup, on every reconnect, then every 5 minutes.
-  The worker follows the open markets of each series that haven't reached
-  their close time yet.
+  With `KALSHI_CATEGORIES`, it pages through every open Kalshi event (about 75
+  pages, ~30 s, paced to stay under the rate limit) and keeps the categories'
+  events plus any listed series. Every open market is upserted into `markets`;
+  any Kalshi market no longer listed is closed. The top `KALSHI_MAX_MARKETS` by
+  24h volume that haven't reached their close time get the WebSocket stream.
+  With only `KALSHI_SERIES`, it asks for each series separately, as before.
+  A 429 (rate limited) is retried with backoff.
 - **Reconnects.** Uses exponential backoff: 1 s, doubling up to 30 s, plus a
   little random jitter.
 - **Writing.** Rows are inserted in batches every 0.5 s. If an insert fails,
