@@ -229,7 +229,7 @@ def test_ensure_entity_updates_existing_row_without_duplicating():
 
 def test_ensure_entity_with_real_entities_model():
     entity_mod = pytest.importorskip(
-        "models.entity", reason="F0 has not added models/entity.py (the `entities` table) yet"
+        "backend.models.entity", reason="F0 has not added backend/models/entity.py (the `entities` table) yet"
     )
     session = _FakeSession()
     row = asyncio.run(companies.ensure_entity(session, Company("TSLA", "Tesla, Inc.", 1318605)))

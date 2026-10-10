@@ -224,11 +224,11 @@ def aliases_for(symbols: Iterable[str]) -> list[EntityAlias]:
 async def ensure_entity(session, company: Company, entity_model=None):
     """Insert or update one `entities` row (type "company") for this company. Does not commit.
 
-    `session` is a SQLAlchemy AsyncSession. `entity_model` defaults to models.entity.Entity
+    `session` is a SQLAlchemy AsyncSession. `entity_model` defaults to backend.models.entity.Entity
     (imported lazily so this module works before that model exists).
     """
     if entity_model is None:
-        from models.entity import Entity as entity_model  # noqa: N813
+        from backend.models.entity import Entity as entity_model  # noqa: N813
 
     row = await session.get(entity_model, company.symbol)
     if row is None:
