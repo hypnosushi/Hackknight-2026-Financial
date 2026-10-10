@@ -1,4 +1,4 @@
-"""Kalshi client: request signing, REST market discovery, WebSocket ticker stream."""
+"""Kalshi client: request signing, REST market discovery, WebSocket ticker + trade stream."""
 
 import asyncio
 import base64
@@ -123,6 +123,27 @@ def parse_ticker(msg: dict, snapshot: bool) -> tuple | None:
         return None
 
 
+def parse_trade(msg: dict) -> tuple | None:
+    """Trade msg -> market_trades row (see db.TRADE_COLUMNS), or None if unusable."""
+    try:
+        # taker_outcome_side replaces the deprecated taker_side; accept either.
+        taker_side = msg.get("taker_outcome_side") or msg["taker_side"]
+        if taker_side not in ("yes", "no"):
+            return None
+        return (
+            "kalshi",
+            msg["market_ticker"],
+            datetime.fromtimestamp(msg["ts_ms"] / 1000, tz=timezone.utc),
+            msg["trade_id"],
+            Decimal(msg["yes_price_dollars"]),
+            Decimal(msg["count_fp"]),
+            taker_side,
+            bool(msg.get("is_block_trade", False)),
+        )
+    except (KeyError, TypeError, ValueError, InvalidOperation):
+        return None
+
+
 class SnapshotMarker:
     """Marks the first ticker after subscribe/add_markets as a snapshot.
 
@@ -147,20 +168,24 @@ class SnapshotMarker:
 
 
 # --- WebSocket session --------------------------------------------------------
-class TickerSession:
-    """One WebSocket connection: subscribe, keep the market list in sync, read tickers.
+CHANNELS = ("ticker", "trade")
+
+
+class MarketSession:
+    """One WebSocket connection: subscribe, keep the market list in sync, read messages.
 
     `discover` is an async callable returning the set of tickers to follow.
-    `on_row` receives each parsed market_prices row.
+    `on_price` / `on_trade` receive each parsed market_prices / market_trades row.
     """
 
-    def __init__(self, key_id, private_key, discover, on_row):
+    def __init__(self, key_id, private_key, discover, on_price, on_trade):
         self.key_id = key_id
         self.private_key = private_key
         self.discover = discover
-        self.on_row = on_row
+        self.on_price = on_price
+        self.on_trade = on_trade
         self.ws = None
-        self.sid = None
+        self.sids: dict[str, int] = {}  # channel -> subscription id
         self.subscribed: set[str] = set()
         self.snapshots = SnapshotMarker()
         self._ids = itertools.count(1)
@@ -198,26 +223,33 @@ class TickerSession:
             return
 
         if not self.subscribed:
+            # One subscription per channel, so each gets its own sid to update.
+            # Only the ticker channel has an initial snapshot.
             self.snapshots.expect(followed)
             await self._send("subscribe", {"channels": ["ticker"],
                                            "market_tickers": sorted(followed),
                                            "send_initial_snapshot": True})
+            await self._send("subscribe", {"channels": ["trade"],
+                                           "market_tickers": sorted(followed)})
             self.subscribed = set(followed)
             return
-        if self.sid is None:
-            log.warning("Subscription id not received yet; skipping market update")
+        if any(ch not in self.sids for ch in CHANNELS):
+            log.warning("Subscription ids not received yet; skipping market update")
             return
 
         added, removed = followed - self.subscribed, self.subscribed - followed
         if added:
             self.snapshots.expect(added)
-            await self._send("update_subscription", {"sid": self.sid, "action": "add_markets",
+            await self._send("update_subscription", {"sid": self.sids["ticker"], "action": "add_markets",
                                                      "market_tickers": sorted(added),
                                                      "send_initial_snapshot": True})
+            await self._send("update_subscription", {"sid": self.sids["trade"], "action": "add_markets",
+                                                     "market_tickers": sorted(added)})
         if removed:
             self.snapshots.forget(removed)
-            await self._send("update_subscription", {"sid": self.sid, "action": "delete_markets",
-                                                     "market_tickers": sorted(removed)})
+            for ch in CHANNELS:
+                await self._send("update_subscription", {"sid": self.sids[ch], "action": "delete_markets",
+                                                         "market_tickers": sorted(removed)})
         if added or removed:
             log.info("Markets updated: +%d -%d, now following %d", len(added), len(removed), len(followed))
         self.subscribed = set(followed)
@@ -239,8 +271,14 @@ class TickerSession:
             if row is None:
                 log.warning("Skipping malformed ticker: %.200s", raw)
             else:
-                self.on_row(row)
-        elif kind == "subscribed" and msg.get("channel") == "ticker":
-            self.sid = msg.get("sid")
+                self.on_price(row)
+        elif kind == "trade":
+            row = parse_trade(msg)
+            if row is None:
+                log.warning("Skipping malformed trade: %.200s", raw)
+            else:
+                self.on_trade(row)
+        elif kind == "subscribed" and msg.get("channel") in CHANNELS:
+            self.sids[msg["channel"]] = msg.get("sid")
         elif kind == "error":
             log.error("Kalshi error: %s", msg)

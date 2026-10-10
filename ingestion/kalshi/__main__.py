@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from sqlalchemy.exc import SQLAlchemyError
 
 from ingestion.kalshi import db
-from ingestion.kalshi.kalshi import REST_URL, TickerSession, discover_series, load_private_key
+from ingestion.kalshi.kalshi import REST_URL, MarketSession, discover_series, load_private_key
 
 log = logging.getLogger("ingestion.kalshi")
 
@@ -45,7 +45,7 @@ async def main() -> None:
     except (OSError, SQLAlchemyError, asyncio.TimeoutError) as e:
         sys.exit(f"Cannot connect to the database: {e}")
 
-    writer = db.PriceWriter(engine)
+    writer = db.RowWriter(engine)
     http = httpx.AsyncClient(base_url=REST_URL, timeout=15)
     first_discovery = True
 
@@ -67,7 +67,7 @@ async def main() -> None:
     async def stream_forever() -> None:
         delay = BACKOFF_START_S
         while True:
-            session = TickerSession(key_id, private_key, discover, writer.add)
+            session = MarketSession(key_id, private_key, discover, writer.add_price, writer.add_trade)
             try:
                 await session.run()
                 log.warning("WebSocket closed")
@@ -82,12 +82,14 @@ async def main() -> None:
             delay = min(delay * 2, BACKOFF_MAX_S)
 
     async def log_stats() -> None:
-        log.info("Rows written in the last minute: %d (queued: %d)", writer.written, len(writer.queue))
-        writer.written = 0
+        p, t = writer.prices, writer.trades
+        log.info("Rows written in the last minute: %d prices, %d trades (queued: %d)",
+                 p.written, t.written, len(p.rows) + len(t.rows))
+        p.written = t.written = 0
 
     async def retention() -> None:
         try:
-            await db.delete_old_prices(engine)
+            await db.delete_old_rows(engine)
         except (SQLAlchemyError, OSError) as e:
             log.warning("Retention delete failed: %s", e)
 

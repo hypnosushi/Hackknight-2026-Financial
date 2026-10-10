@@ -1,4 +1,4 @@
-"""Postgres via SQLAlchemy: table setup, market upserts, batched price writer, retention."""
+"""Postgres via SQLAlchemy: table setup, market upserts, batched price/trade writer, retention."""
 
 import logging
 from collections import deque
@@ -8,14 +8,16 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from models import Base, Market, MarketPrice
+from models import Base, Market, MarketPrice, MarketTrade
 
 log = logging.getLogger(__name__)
 
-MAX_QUEUE = 100_000
+MAX_QUEUE = 100_000  # per table
 UPSERT_CHUNK = 1000  # keeps each statement under Postgres' bind-parameter limit
 PRICE_COLUMNS = ["source", "market_id", "timestamp", "price_or_odds", "yes_bid", "yes_ask",
                  "yes_bid_size", "yes_ask_size", "volume", "open_interest", "snapshot"]
+TRADE_COLUMNS = ["source", "market_id", "timestamp", "trade_id", "yes_price", "count",
+                 "taker_side", "is_block_trade"]
 MARKET_FIELDS = ["title", "yes_sub_title", "rules_primary", "event_ticker", "event_title",
                  "series", "series_title", "category", "tags", "close_time"]
 
@@ -64,37 +66,56 @@ async def close_missing(engine: AsyncEngine, series: list[str], open_ids: list[s
         )
 
 
-async def delete_old_prices(engine: AsyncEngine) -> None:
+async def delete_old_rows(engine: AsyncEngine) -> None:
     async with engine.begin() as conn:
-        await conn.execute(delete(MarketPrice).where(
-            MarketPrice.timestamp < text("now() - interval '3 hours'")))
+        for model in (MarketPrice, MarketTrade):
+            await conn.execute(delete(model).where(
+                model.timestamp < text("now() - interval '3 hours'")))
 
 
-class PriceWriter:
-    """Queues ticker rows in memory and inserts them in batches."""
+class _Queue:
+    """In-memory rows for one table, inserted in batches."""
+
+    def __init__(self, model, columns: list[str]):
+        self.model = model
+        self.columns = columns
+        self.rows: deque = deque(maxlen=MAX_QUEUE)  # full -> oldest rows drop off
+        self.written = 0  # since last stats log
+
+    async def flush(self, engine: AsyncEngine) -> None:
+        if not self.rows:
+            return
+        batch = list(self.rows)
+        self.rows.clear()
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(insert(self.model), [dict(zip(self.columns, row)) for row in batch])
+            self.written += len(batch)
+        except (SQLAlchemyError, OSError) as e:
+            log.warning("Insert of %d %s rows failed, will retry: %s",
+                        len(batch), self.model.__tablename__, e)
+            # Put the batch back in front of rows that arrived meanwhile;
+            # the deque's maxlen drops the oldest if this overflows.
+            newer = list(self.rows)
+            self.rows.clear()
+            self.rows.extend(batch)
+            self.rows.extend(newer)
+
+
+class RowWriter:
+    """Queues ticker and trade rows in memory and inserts them in batches."""
 
     def __init__(self, engine: AsyncEngine):
         self.engine = engine
-        self.queue: deque = deque(maxlen=MAX_QUEUE)  # full -> oldest rows drop off
-        self.written = 0  # since last stats log
+        self.prices = _Queue(MarketPrice, PRICE_COLUMNS)
+        self.trades = _Queue(MarketTrade, TRADE_COLUMNS)
 
-    def add(self, row: tuple) -> None:
-        self.queue.append(row)
+    def add_price(self, row: tuple) -> None:
+        self.prices.rows.append(row)
+
+    def add_trade(self, row: tuple) -> None:
+        self.trades.rows.append(row)
 
     async def flush(self) -> None:
-        if not self.queue:
-            return
-        batch = list(self.queue)
-        self.queue.clear()
-        try:
-            async with self.engine.begin() as conn:
-                await conn.execute(insert(MarketPrice), [dict(zip(PRICE_COLUMNS, row)) for row in batch])
-            self.written += len(batch)
-        except (SQLAlchemyError, OSError) as e:
-            log.warning("Insert of %d rows failed, will retry: %s", len(batch), e)
-            # Put the batch back in front of rows that arrived meanwhile;
-            # the deque's maxlen drops the oldest if this overflows.
-            newer = list(self.queue)
-            self.queue.clear()
-            self.queue.extend(batch)
-            self.queue.extend(newer)
+        await self.prices.flush(self.engine)
+        await self.trades.flush(self.engine)

@@ -1,12 +1,13 @@
 # Kalshi → Postgres worker
 
-Streams live Kalshi ticker updates (price, bid/ask, sizes, volume) for the
-markets in `KALSHI_SERIES` into Postgres, keeping the last 3 hours.
+Streams live Kalshi ticker updates (price, bid/ask, sizes, volume) and every
+executed trade (size, price, taker side) for the markets in `KALSHI_SERIES`
+into Postgres, keeping the last 3 hours.
 
-- `kalshi.py`: request signing, REST market discovery, WebSocket ticker stream
-- `db.py`: table setup, market upserts, batched price writer, retention
+- `kalshi.py`: request signing, REST market discovery, WebSocket ticker + trade stream
+- `db.py`: table setup, market upserts, batched price/trade writer, retention
 - `__main__.py`: entry point, loop wiring, shutdown
-- `models/` (repo root): SQLAlchemy models `markets` and `market_prices`.
+- `models/` (repo root): SQLAlchemy models `markets`, `market_prices` and `market_trades`.
   The tables are created from these models on startup; there are no migrations.
 
 ## Setup
@@ -40,7 +41,7 @@ When it's working, the log shows these lines:
 ```
 ... INFO ingestion.kalshi: Following 180 markets across KXHIGHNY, KXBTCD
 ... INFO ingestion.kalshi.kalshi: WebSocket connected
-... INFO ingestion.kalshi: Rows written in the last minute: 2412 (queued: 0)
+... INFO ingestion.kalshi: Rows written in the last minute: 454 prices, 79 trades (queued: 0)
 ```
 
 Ctrl+C writes out whatever is still queued, then exits.
@@ -53,10 +54,12 @@ How it behaves:
 - **Reconnects.** Uses exponential backoff: 1 s, doubling up to 30 s, plus a
   little random jitter.
 - **Writing.** Rows are inserted in batches every 0.5 s. If an insert fails,
-  the rows are retried on the next flush. The queue holds at most 100k rows;
-  beyond that the oldest are dropped.
+  the rows are retried on the next flush. Each queue (prices, trades) holds at most
+  100k rows; beyond that the oldest are dropped.
 - **Snapshots.** The first ticker after a subscribe has `snapshot = true`.
   It's Kalshi's current state for that market, and its timestamp can be hours old.
+- **Trades.** One `market_trades` row per executed trade. `taker_side` is the
+  outcome the taker bought (`yes`/`no`); `count` is contracts, not dollars.
 
 ## Verify
 
@@ -67,6 +70,7 @@ Open a SQL prompt with
    `Rows written` line every minute.
 2. `SELECT count(*) FROM markets WHERE status = 'active';` returns more than 0.
 3. `SELECT count(*) FROM market_prices;` grows when you run it again a few seconds later.
+   `SELECT count(*) FROM market_trades;` grows too, more slowly (only when trades happen).
 4. After 5+ minutes, the detector query below returns rows.
 5. `uv run pytest tests/ingestion/kalshi` passes.
 

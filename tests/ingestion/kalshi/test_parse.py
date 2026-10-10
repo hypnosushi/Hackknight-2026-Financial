@@ -1,8 +1,8 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from ingestion.kalshi.db import PRICE_COLUMNS
-from ingestion.kalshi.kalshi import SnapshotMarker, parse_ticker
+from ingestion.kalshi.db import PRICE_COLUMNS, TRADE_COLUMNS
+from ingestion.kalshi.kalshi import SnapshotMarker, parse_ticker, parse_trade
 
 TICKER_MSG = {
     "market_ticker": "FED-23DEC-T3.00",
@@ -50,3 +50,36 @@ def test_first_ticker_after_subscribe_is_snapshot():
     assert marker.is_snapshot("C") is False  # never subscribed/added
     marker.forget(["B"])
     assert marker.is_snapshot("B") is False  # removed before its snapshot arrived
+
+
+TRADE_MSG = {
+    "trade_id": "d91bc706-ee49-470d-82d8-11418bda6fed",
+    "market_ticker": "HIGHNY-22DEC23-B53.5",
+    "yes_price_dollars": "0.3600",
+    "no_price_dollars": "0.6400",
+    "count_fp": "136.00",
+    "taker_side": "no",
+    "taker_outcome_side": "no",
+    "taker_book_side": "ask",
+    "is_block_trade": False,
+    "ts_ms": 1669149841000,
+}
+
+
+def test_parses_trade():
+    row = dict(zip(TRADE_COLUMNS, parse_trade(TRADE_MSG)))
+    assert row["market_id"] == "HIGHNY-22DEC23-B53.5"
+    assert row["yes_price"] == Decimal("0.3600")
+    assert row["count"] == Decimal("136.00")
+    assert row["taker_side"] == "no"
+    assert row["is_block_trade"] is False
+
+
+def test_trade_falls_back_to_deprecated_taker_side():
+    msg = {k: v for k, v in TRADE_MSG.items() if k != "taker_outcome_side"}
+    assert dict(zip(TRADE_COLUMNS, parse_trade(msg)))["taker_side"] == "no"
+
+
+def test_trade_missing_count_is_skipped():
+    msg = {k: v for k, v in TRADE_MSG.items() if k != "count_fp"}
+    assert parse_trade(msg) is None
