@@ -8,12 +8,12 @@ from models.base import Base
 
 
 class MarketPrice(Base):
-    """One row per Kalshi ticker update (quote or trade). Kept for 3 hours."""
+    """One row per quote update (Kalshi ticker, Polymarket best bid/ask). Kept for 30 minutes, then rolled up into market_hourly."""
 
     __tablename__ = "market_prices"
     __table_args__ = (
         ForeignKeyConstraint(["source", "market_id"], ["markets.source", "markets.market_id"]),
-        Index("market_prices_market_time", "market_id", "timestamp"),
+        Index("market_prices_market_time", "source", "market_id", "timestamp"),
         Index("market_prices_time", "timestamp"),
     )
 

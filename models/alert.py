@@ -19,8 +19,8 @@ class Alert(Base):
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     source: Mapped[str] = mapped_column(Text, server_default="kalshi")
     market_id: Mapped[str] = mapped_column(Text)  # the strongest market in the event
-    event_ticker: Mapped[str | None] = mapped_column(Text)
-    series: Mapped[str | None] = mapped_column(Text)
+    event_id: Mapped[str | None] = mapped_column(Text)
+    series_id: Mapped[str | None] = mapped_column(Text)
     direction: Mapped[str] = mapped_column(Text)  # 'yes_up' | 'yes_down'
     reasons: Mapped[list[str]] = mapped_column(ARRAY(Text))  # price_move, volume_burst, whale, imbalance
     score: Mapped[Decimal] = mapped_column(Numeric)

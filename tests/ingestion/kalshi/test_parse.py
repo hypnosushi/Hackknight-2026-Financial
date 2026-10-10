@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from ingestion.kalshi.db import PRICE_COLUMNS, TRADE_COLUMNS
+from ingestion.common.db import PRICE_COLUMNS, TRADE_COLUMNS
 from ingestion.kalshi.kalshi import SnapshotMarker, parse_ticker, parse_trade
 
 TICKER_MSG = {
