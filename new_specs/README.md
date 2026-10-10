@@ -34,16 +34,21 @@ specs below:
 
 | Spec | Status |
 |---|---|
-| [ingestion/](./ingestion/README.md) — News Aggregator, Twitter Aggregator, Polymarket, Kalshi | Draft |
+| [ingestion/](./ingestion/README.md) — News Aggregator, Twitter Aggregator, Polymarket, Kalshi, Scheduler | Draft |
 | [jev-classifier.md](./jev-classifier.md) | Draft |
+| [twitter-jev-classification.md](./twitter-jev-classification.md) | Draft |
 | [company-network.md](./company-network.md) | Draft |
 | [trending-cards.md](./trending-cards.md) | Draft |
 | [display-charting.md](./display-charting.md) | Draft |
 | [news-graphing.md](./news-graphing.md) *(name TBD)* | Draft |
+| [fastapi.md](./fastapi.md) | Draft — scaffolding only |
+| [shared-db-hosting.md](./shared-db-hosting.md) | Draft |
 
 ## Rough Data Flow
 
 ```
+ingestion/scheduler ──► triggers all 4 sources below on their intervals
+
 ingestion/news-aggregator    ─┐
 ingestion/twitter-aggregator ─┼──► jev-classifier ──┬──► trending-cards
                                │                      ├──► news-graphing ──► (plotted on) display-charting
@@ -63,10 +68,12 @@ company-network ───────────────────► tre
 - **How is Company Network actually built?** By industry, supply chain,
   production, or distribution — called out as explicitly undecided in the
   source doc. See [company-network.md](./company-network.md).
-- **Is entity/ticker extraction done per-source (news/twitter) or
-  centrally in [[jev-classifier]]?**
 - **"News Graphing" naming** — explicitly flagged "(change name)" in the
   source doc.
+- **Project stack** — see [`architecture/tech-stack.md`](../architecture/tech-stack.md)
+  (Python/FastAPI backend, Postgres/SQLAlchemy, React frontend); several
+  pieces there are still open (TS vs. JS, scheduler implementation, etc.) and
+  affect [scheduler.md](./ingestion/scheduler.md)'s design.
 
 ## Spec Template
 

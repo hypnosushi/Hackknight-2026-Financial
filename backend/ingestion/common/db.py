@@ -2,6 +2,7 @@
 
 import logging
 from collections import deque
+from urllib.parse import parse_qs, urlencode
 
 from sqlalchemy import delete, func, insert, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -27,16 +28,30 @@ MARKET_FIELDS = ["title", "outcome_label", "rules_primary", "event_id", "event_t
 
 
 def _async_url(url: str) -> str:
-    """Accept a plain postgresql:// URL; SQLAlchemy needs the asyncpg driver named."""
+    """Accept a plain postgresql:// URL; SQLAlchemy needs the asyncpg driver named.
+    Also strips libpq-style query params (sslmode, channel_binding) that hosted
+    providers like Neon append but asyncpg's connect() doesn't accept — SSL is
+    requested separately via connect_args instead (see make_engine).
+    """
     for prefix in ("postgresql://", "postgres://"):
         if url.startswith(prefix):
-            return "postgresql+asyncpg://" + url[len(prefix):]
-    return url
+            url = "postgresql+asyncpg://" + url[len(prefix):]
+            break
+    base, _, query = url.partition("?")
+    if not query:
+        return base
+    params = parse_qs(query)
+    params.pop("sslmode", None)
+    params.pop("channel_binding", None)
+    return base + ("?" + urlencode(params, doseq=True) if params else "")
 
 
 def make_engine(url: str) -> AsyncEngine:
+    connect_args = {"timeout": 10}
+    if "sslmode=require" in url or "sslmode=verify-full" in url:
+        connect_args["ssl"] = True
     return create_async_engine(_async_url(url), pool_size=3, max_overflow=0,
-                               connect_args={"timeout": 10})
+                               connect_args=connect_args)
 
 
 async def connect(url: str) -> AsyncEngine:
