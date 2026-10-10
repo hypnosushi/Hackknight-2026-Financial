@@ -311,3 +311,101 @@ def test_search_terms_fall_back_to_symbol_for_non_us_companies():
     assert ne.search_terms([EntityAlias(symbol="Samsung Electronics", aliases=[]),
                             EntityAlias(symbol="TSLA", aliases=["Tesla, Inc.", "Tesla"])]) == [
         "Samsung Electronics", "Tesla"]
+
+
+# --- classification with GRAPH_LLM_PROVIDER=anthropic (no OpenRouter, no Jev) --------------------
+
+class FakeComplete:
+    """Stands in for llm.complete: answers with keyword_label(title + text) and records the prompts."""
+
+    def __init__(self, error=None):
+        self.calls = []
+        self.error = error
+
+    def __call__(self, system, user, response_model, model=None):
+        self.calls.append((system, user))
+        if self.error:
+            raise self.error
+        return response_model(label=keyword_label(user.split("Title: ", 1)[1]))
+
+
+@pytest.fixture
+def anthropic_model(monkeypatch):
+    from company_graph import llm
+
+    monkeypatch.setenv("GRAPH_LLM_PROVIDER", "anthropic")
+    fake = FakeComplete()
+    monkeypatch.setattr(llm, "complete", fake)
+    return fake
+
+
+def test_anthropic_provider_types_events_with_the_model_not_jev(anthropic_model):
+    # conftest makes any Jev call fail, so a pass means Jev was not used.
+    correct = 0
+    for title, expected in HEADLINES:
+        item = ne.ContentItem(id=title, title=title, url=f"https://x.com/{len(title)}", published_at=NOW)
+        correct += ne.classify_event(item) == expected
+    assert correct >= 8, correct
+    system, user = anthropic_model.calls[0]
+    for label, description in ne.EVENT_LABELS.items():
+        assert f"- {label}: {description}" in system
+    assert "Title: Tesla unveils cheaper Model 2" in user
+
+
+def test_anthropic_reply_schema_allows_only_the_event_labels():
+    assert set(ne.EventLabel.model_json_schema()["properties"]["label"]["enum"]) == set(NEWS_EVENT_TYPES) | {"none"}
+    with pytest.raises(ValueError):
+        ne.EventLabel(label="odds_move")
+
+
+def test_anthropic_none_label_maps_to_none(monkeypatch):
+    from company_graph import llm
+
+    monkeypatch.setattr(llm, "complete", lambda s, u, m, model=None: m(label="none"))
+    item = ne.ContentItem(id="u", title="5 EV stocks to watch", url="https://x.com/u", published_at=NOW)
+    assert ne.classify_event(item, provider="anthropic") is None
+
+
+def test_explicit_openrouter_provider_still_uses_jev(monkeypatch):
+    from company_graph import llm
+
+    def no_model(*args, **kwargs):
+        raise AssertionError("the model must not be used with the openrouter provider")
+
+    class Result:
+        label = "recall"
+
+    monkeypatch.setenv("GRAPH_LLM_PROVIDER", "anthropic")
+    monkeypatch.setattr(llm, "complete", no_model)
+    item = ne.ContentItem(id="u", title="t", url="https://x.com/u", published_at=NOW)
+    assert ne.classify_event(item, classifier=lambda *a: Result(), provider="openrouter") == "recall"
+
+
+def test_refresh_with_anthropic_provider_saves_typed_events(store, session, anthropic_model):
+    gw = FakeGateway([
+        article("Tesla recalls 100,000 Model Y SUVs", "https://reuters.com/a"),
+        article("Opinion: Why Tesla is overrated", "https://x.com/op"),
+    ])
+    cfg = Config(newsapi_key="test-key", graph_llm_provider="anthropic")
+    events = asyncio.run(ne.refresh_news_events(session, ["TSLA"], cfg=cfg, store=store, gateway=gw,
+                                                aliases=DIRECTORY.aliases_for, now=NOW))
+    assert [(e.event_type, e.url) for e in events] == [("recall", "https://reuters.com/a")]
+    assert len(anthropic_model.calls) == 2
+    rows = session.sync.execute(select(GraphEvent)).scalars().all()
+    assert [(r.entity_symbol, r.event_type) for r in rows] == [("TSLA", "recall")]
+
+
+def test_model_failure_is_skipped_and_retried_next_time(store, monkeypatch):
+    from company_graph import llm
+
+    failing = FakeComplete(error=llm.LlmError("overloaded"))
+    monkeypatch.setattr(llm, "complete", failing)
+    items = [ne.ContentItem(id="r", title="Ford recalls Explorers", url="https://x.com/r", published_at=NOW,
+                            entities=["F"])]
+    assert asyncio.run(ne.classify_items(items, store=store, now=NOW, provider="anthropic")) == []
+    assert store.label("https://x.com/r") == (False, None)
+
+    working = FakeComplete()
+    monkeypatch.setattr(llm, "complete", working)
+    events = asyncio.run(ne.classify_items(items, store=store, now=NOW, provider="anthropic"))
+    assert [e.event_type for e in events] == ["recall"] and len(working.calls) == 1
