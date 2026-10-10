@@ -104,11 +104,18 @@ The company-network graph's edges.
 | `confidence` | `NUMERIC` | `company-network.md`'s "source confidence" filter |
 | `source` | `TEXT` | where the edge came from |
 | `last_confirmed_at` | `TIMESTAMPTZ` | backs the "edge recency" filter |
+| `summary` | `TEXT` | one factual sentence on what the source states (Company Graph) |
+| `evidence_url` | `TEXT` | the filing the edge came from (Company Graph) |
 
-**From:** `company-network.md`'s draft edge shape. **Open question carried
-over from that spec:** how edges actually get built (industry vs. supply
-chain vs. production vs. distribution) is unresolved — this table shape
-works regardless of which method is picked.
+Unique on `(entity_symbol, related_entity_symbol, relationship_type)`.
+
+**From:** `company-network.md`'s draft edge shape. **Resolved by
+`new_specs/ingestion/company-graph-tasks.md`:** edges come from supply-chain
+and competitor relationships stated in SEC filings (`source = filing`), with a
+same-industry fallback (`source = sector`). `relationship_type` is the related
+company's role: `supplier`, `customer`, `partner`, `competitor` or
+`sector_peer` (`supplier` is the old `dependency`). Model:
+`backend/models/entity_relationship.py`.
 
 ## 5. `markets`
 
