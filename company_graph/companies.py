@@ -17,7 +17,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from entities import EntityAlias
+from backend.entities import EntityAlias
 
 SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 CACHE_DIR = Path(__file__).resolve().parents[1] / ".cache" / "company_graph"

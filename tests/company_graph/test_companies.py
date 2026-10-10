@@ -110,7 +110,7 @@ def test_aliases_for(directory):
 
 
 def test_aliases_are_entity_alias_used_by_news():
-    from entities import EntityAlias, EntityMatcher
+    from backend.entities import EntityAlias, EntityMatcher
 
     d = CompanyDirectory.from_sec_json(SEC_FIXTURE)
     aliases = d.aliases_for(["TSLA"])
