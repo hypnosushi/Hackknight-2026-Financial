@@ -39,7 +39,11 @@ its own.
   per table in the schema.
 - **Frontend:** React. Language (TypeScript vs. JavaScript) not decided yet
   — see Open Questions.
-- **Python environment management:** `venv` + `pip`/`requirements.txt`.
+- **Python environment management:** `uv`. Dependencies declared in
+  `pyproject.toml`, pinned in `uv.lock` (committed, so every contributor
+  resolves the same versions). Run things with `uv run ...` — no manual
+  `venv` activation needed. `uv sync` installs/updates the environment
+  from the lockfile.
 - **Migrations:** none — new project, tables are created directly from the
   SQLAlchemy models rather than via Alembic.
 - **Scheduler:** async, in-process, running alongside FastAPI in the same
