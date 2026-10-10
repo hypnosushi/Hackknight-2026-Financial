@@ -6,6 +6,6 @@ export const router = createBrowserRouter([
   {
     path: "/",
     element: <AppLayout />,
-    children: [{ index: true, element: <HomePage /> }],
+    children: [{ index: true, element: <HomePage /> }, { path: "company-graph", lazy: () => import("./pages/CompanyGraphPage").then((m) => ({ Component: m.default })) }],
   },
 ]);
