@@ -23,6 +23,10 @@ class Config:
     graph_anthropic_model: str = "claude-opus-5-5"  # Claude model id when GRAPH_LLM_PROVIDER=anthropic
     sec_contact_email: str = ""          # sent in the SEC User-Agent; required for any SEC call
     newsapi_key: str = ""
+    graph_social_ttl_hours: float = 6    # how long one company's X search result is reused
+    graph_social_daily_budget: int = 20  # most X searches this feature may make per day (each reads up to 100 posts)
+    graph_social_min_likes: int = 5      # posts with fewer likes are not sent to Jev (most are noise)
+    x_bearer_token: str = ""
     database_url: str = ""
 
     @property
@@ -40,6 +44,10 @@ class Config:
     @property
     def news_ttl_s(self) -> float:
         return self.graph_news_ttl_hours * 3600
+
+    @property
+    def social_ttl_s(self) -> float:
+        return self.graph_social_ttl_hours * 3600
 
 
 def load() -> Config:

@@ -3,9 +3,10 @@
 `build_highlights(symbol, session=...)`, for the searched company S:
 
 1. Reads S's links with `links.read_links` (never a plain query). No links: nothing to do.
-2. Refreshes events for S and its linked companies: news (F6, `refresh_news_events`) and
-   prediction-market alerts (F7, `fetch_market_events`). Each step is optional: no NEWSAPI_KEY,
-   no `alerts` table, a NewsAPI or Jev outage or any other failure is logged and skipped. Each
+2. Refreshes events for S and its linked companies: news (F6, `refresh_news_events`),
+   prediction-market alerts (F7, `fetch_market_events`) and X posts (F12,
+   `refresh_social_events`, left out when X_BEARER_TOKEN is unset). Each step is optional: no
+   NEWSAPI_KEY, no `alerts` table, a NewsAPI, X or Jev outage or any other failure is logged and skipped. Each
    successful step is committed, a failed one rolled back, so one cannot undo the other.
 3. Loads `graph_events` from the last GRAPH_EVENT_WINDOW_DAYS for S and its linked companies.
 4. Asks the model (`llm.complete`, one call per event, on worker threads) which candidate
@@ -116,7 +117,7 @@ class HighlightRunResult:
     evaluated: int = 0              # events sent to the model this run
     reused: int = 0                 # events skipped because they were judged before
     saved: int = 0                  # highlights inserted
-    steps_failed: list[str] = field(default_factory=list)  # 'news', 'market' (logged and skipped)
+    steps_failed: list[str] = field(default_factory=list)  # 'news', 'market', 'social' (logged and skipped)
     model_errors: int = 0
 
 
@@ -188,8 +189,13 @@ def event_prompt(event, event_company: str, candidates: Sequence[Candidate]) -> 
     return "\n".join(lines)
 
 
+# The model sometimes lists a company only to say the event does not involve it.
+_NOT_INVOLVED = re.compile(r"\b(unrelated|not related|does not (?:directly )?(?:involve|affect|touch)|no (?:direct )?(?:link|connection))\b",
+                           re.IGNORECASE)
+
+
 def is_factual(reason: str) -> bool:
-    return bool(reason.strip()) and not _NOT_FACTUAL.search(reason)
+    return bool(reason.strip()) and not _NOT_FACTUAL.search(reason) and not _NOT_INVOLVED.search(reason)
 
 
 def _clean_reason(reason: str) -> str:
@@ -395,6 +401,14 @@ async def _default_news(session, symbols, *, cfg):
     return await refresh_news_events(session, symbols, cfg=cfg)
 
 
+async def _default_social(session, symbols, *, cfg):
+    from company_graph.social_events import refresh_social_events
+
+    if not cfg.x_bearer_token:
+        return []  # X is optional: without a key the step is simply left out
+    return await refresh_social_events(session, symbols, cfg=cfg)
+
+
 async def _default_market(session, symbols, *, cfg, directory=None):
     from company_graph.market_events import fetch_market_events
 
@@ -436,6 +450,7 @@ async def build_highlights(
     now: datetime | None = None,
     refresh_news: Callable | None = _default_news,
     refresh_market: Callable | None = _default_market,
+    refresh_social: Callable | None = _default_social,
     complete: Callable | None = None,
     price_gateway: Any = "env",
     fetch_prices: Callable | None = None,
@@ -444,7 +459,8 @@ async def build_highlights(
     """Build and save the highlights for `symbol`'s graph. See the module docstring.
 
     Commits as it goes (give it its own session). Injectable for tests: `refresh_news(session,
-    symbols, cfg=)` and `refresh_market(session, symbols, cfg=, directory=)` (None skips the step),
+    symbols, cfg=)`, `refresh_market(session, symbols, cfg=, directory=)` and
+    `refresh_social(session, symbols, cfg=)` (None skips the step),
     `complete` (llm.complete's signature), `price_gateway` ("env" reads the Alpaca keys; None
     disables prices), `fetch_prices` (fetch_price_series' signature) and `store`.
     """
@@ -464,8 +480,10 @@ async def build_highlights(
 
     news_fn = (lambda: refresh_news(session, symbols, cfg=cfg)) if refresh_news else None
     market_fn = (lambda: refresh_market(session, symbols, cfg=cfg, directory=directory)) if refresh_market else None
+    social_fn = (lambda: refresh_social(session, symbols, cfg=cfg)) if refresh_social else None
     await _step("news", session, news_fn, result)
     await _step("market", session, market_fn, result)
+    await _step("social", session, social_fn, result)
 
     events = await load_events(session, symbols, now - timedelta(seconds=cfg.event_window_s))
     result.events = len(events)

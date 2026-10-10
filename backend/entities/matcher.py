@@ -20,20 +20,21 @@ from .models import EntityAlias
 
 class EntityMatcher:
     def __init__(self, entities: list[EntityAlias]):
-        """Pre-builds a case-insensitive lookup once per batch of entities,
-        rather than re-scanning the entity list per item.
+        """Pre-builds the lookup once per batch of entities, rather than
+        re-scanning the entity list per item.
         """
         self._patterns: dict[str, list[re.Pattern]] = {}
         for entity in entities:
-            terms = [entity.symbol, *entity.aliases]
             self._patterns[entity.symbol] = [
-                re.compile(rf"\b{re.escape(term)}\b", re.IGNORECASE) for term in terms
+                _term_pattern(entity.symbol, is_symbol=True),
+                *(_term_pattern(alias) for alias in entity.aliases),
             ]
 
     def match(self, title: str, text: str | None) -> list[str]:
-        """Case-insensitive, word-boundary match of each tracked entity's
-        symbol + aliases against title + text. Returns matched symbols,
-        deduped, in the order entities were passed to __init__.
+        """Word-boundary match of each tracked entity's symbol + aliases
+        against title + text. Aliases match in any case; a ticker symbol
+        matches only as written (see _term_pattern). Returns matched
+        symbols, deduped, in the order entities were passed to __init__.
         """
         haystack = f"{title} {text or ''}"
         matched: list[str] = []
@@ -41,3 +42,13 @@ class EntityMatcher:
             if any(pattern.search(haystack) for pattern in patterns):
                 matched.append(symbol)
         return matched
+
+
+def _term_pattern(term: str, is_symbol: bool = False) -> re.Pattern:
+    """A ticker ("A", "ON", "NVDA") must appear in capitals, so short
+    tickers don't tag every text containing the ordinary words "a" or
+    "on". A symbol that isn't a ticker (a non-US company stored under its
+    name) and every alias match in any case.
+    """
+    is_ticker = is_symbol and term.isupper() and " " not in term
+    return re.compile(rf"\b{re.escape(term)}\b", 0 if is_ticker else re.IGNORECASE)

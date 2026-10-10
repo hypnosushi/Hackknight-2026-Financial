@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict
 RelationshipType = Literal["supplier", "customer", "partner", "competitor", "sector_peer"]
 RelationshipSource = Literal["filing", "sector"]
 EventType = Literal["product_launch", "contract", "earnings_surprise", "recall", "acquisition", "odds_move"]
-EventSource = Literal["news", "market"]
+EventSource = Literal["news", "market", "social"]
 Direction = Literal["may_benefit", "may_face_pressure"]
 RunStatus = Literal["running", "done", "error"]
 

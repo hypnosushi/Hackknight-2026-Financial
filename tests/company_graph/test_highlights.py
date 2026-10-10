@@ -282,6 +282,8 @@ def test_non_factual_reasons_are_dropped(session, store):
     assert not hl.is_factual("The stock could climb after the launch.")
     assert not hl.is_factual("A price target of $300.")
     assert not hl.is_factual("  ")
+    assert not hl.is_factual("The index batch is unrelated to NVIDIA's supply relationship with Nebius.")
+    assert not hl.is_factual("The launch does not involve Panasonic's cells.")
 
 
 def test_model_failure_on_one_event_does_not_fail_the_run(session, store):

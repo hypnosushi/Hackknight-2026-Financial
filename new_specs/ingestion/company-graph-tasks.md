@@ -26,6 +26,7 @@ This feature replaces the deleted `new_specs/company-network.md` and answers its
 | F9 Graph API | Done, verified live |
 | F10 Graph page | Done, works against the real API |
 | F11 Demo tools | Not started, unblocked |
+| F12 X posts as events | Done, verified live (`company_graph/social_events.py`) |
 
 ## Live results (2026-10-10)
 
@@ -46,7 +47,7 @@ Fixed during the live runs: SEC full-text search 500s are retried; reverse looku
 - The page colours linked companies only. A highlight whose target is the searched company (news about a linked company that affects it) is stored but not shown on that company's own graph; it shows on the linked company's graph. Colouring the centre node would fix this.
 - Suppliers that do not file with SEC (Panasonic, CATL's own filings, private companies) only appear when another filing names them.
 - NewsAPI's free tier delays articles by about a day and includes small sites. Market highlights need the `alerts` table filled by the team's ingestion and alert detector.
-- The team's OpenRouter default model (`anthropic/claude-3.5-haiku`) is retired; set `GRAPH_LLM_MODEL`, or use `GRAPH_LLM_PROVIDER=anthropic`.
+- X posts (F12) are noisier than news. Jev keeps only posts that state an event about the named company at 0.9 probability or more; in the first live run 1 of 21 posts for NVDA's graph was kept (GlobalFoundries' $2B agreement with TSMC). Each X search reads up to 100 posts, which X bills for, so it has its own daily budget.
 - The API keeps its run registries in memory: run one API process.
 
 ## What already exists (use it, do not rebuild it)

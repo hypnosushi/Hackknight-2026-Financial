@@ -48,5 +48,10 @@
   {"symbol": "HON", "name": "Honeywell International Inc.", "aliases": ["Honeywell"]},
   {"symbol": "UNP", "name": "Union Pacific Corporation", "aliases": ["Union Pacific"]},
   {"symbol": "GS", "name": "The Goldman Sachs Group, Inc.", "aliases": ["Goldman Sachs", "Goldman"]},
-  {"symbol": "QCOM", "name": "QUALCOMM Incorporated", "aliases": ["Qualcomm"]}
+  {"symbol": "QCOM", "name": "QUALCOMM Incorporated", "aliases": ["Qualcomm"]},
+  {"symbol": "PLTR", "name": "Palantir Technologies Inc.", "aliases": ["Palantir"]},
+  {"symbol": "UBER", "name": "Uber Technologies, Inc.", "aliases": ["Uber"]},
+  {"symbol": "DIS", "name": "The Walt Disney Company", "aliases": ["Disney", "Walt Disney"]},
+  {"symbol": "F", "name": "Ford Motor Company", "aliases": ["Ford", "Ford Motor"]},
+  {"symbol": "DAL", "name": "Delta Air Lines, Inc.", "aliases": ["Delta Air Lines", "Delta Airlines"]}
 ]

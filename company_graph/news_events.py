@@ -94,8 +94,9 @@ class NewsStore:
     Writes go through a temporary file and a rename, so a crash never leaves half a file.
     """
 
-    def __init__(self, path: Path | str = CACHE_FILE):
+    def __init__(self, path: Path | str = CACHE_FILE, item_model: type[BaseModel] = ContentItem):
         self.path = Path(path)
+        self.item_model = item_model  # the social step (F12) stores tweets with the same shape
         self.data: dict[str, Any] = {"budget": {}, "companies": {}, "labels": {}}
         if self.path.exists():
             try:
@@ -120,13 +121,13 @@ class NewsStore:
         self.data["budget"] = {"date": now.date().isoformat(), "count": self.requests_today(now) + 1}
 
     # per-company results
-    def cached(self, symbol: str) -> tuple[datetime, list[ContentItem]] | None:
+    def cached(self, symbol: str) -> tuple[datetime, list[BaseModel]] | None:
         entry = (self.data.get("companies") or {}).get(symbol)
         if not entry:
             return None
         try:
             fetched = datetime.fromisoformat(entry["fetched_at"])
-            items = [ContentItem.model_validate(i) for i in entry.get("items", [])]
+            items = [self.item_model.model_validate(i) for i in entry.get("items", [])]
         except (KeyError, ValueError, TypeError):
             return None
         return fetched, items
@@ -453,8 +454,8 @@ async def classify_items(
 
 # --- saving --------------------------------------------------------------------------------------
 
-async def save_news_events(session, events: Sequence[NewsEvent], event_model=None) -> list:
-    """Add one `graph_events` row (source "news") per (symbol, story) not already stored.
+async def save_news_events(session, events: Sequence[NewsEvent], event_model=None, source: str = "news") -> list:
+    """Add one `graph_events` row (source `source`, "news" by default) per (symbol, story) not already stored.
 
     `session` is a SQLAlchemy AsyncSession (or anything with async `execute`, `flush` and `add`).
     Flushes but does not commit. Returns the new rows.
@@ -477,7 +478,7 @@ async def save_news_events(session, events: Sequence[NewsEvent], event_model=Non
     for (sym, url), e in pairs.items():
         if (sym, url) in existing:
             continue
-        row = event_model(entity_symbol=sym, source="news", event_type=e.event_type, title=e.title,
+        row = event_model(entity_symbol=sym, source=source, event_type=e.event_type, title=e.title,
                           url=url, occurred_at=e.occurred_at, alert_id=None)
         session.add(row)
         rows.append(row)
