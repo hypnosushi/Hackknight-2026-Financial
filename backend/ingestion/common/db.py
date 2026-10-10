@@ -2,6 +2,7 @@
 
 import logging
 from collections import deque
+from urllib.parse import parse_qsl, urlencode
 
 from sqlalchemy import delete, func, insert, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -27,11 +28,21 @@ MARKET_FIELDS = ["title", "outcome_label", "rules_primary", "event_id", "event_t
 
 
 def _async_url(url: str) -> str:
-    """Accept a plain postgresql:// URL; SQLAlchemy needs the asyncpg driver named."""
+    """Accept a plain postgresql:// URL; SQLAlchemy needs the asyncpg driver named.
+
+    Hosted URLs (e.g. Neon) carry libpq options asyncpg rejects: `sslmode` becomes asyncpg's
+    `ssl`, and `channel_binding` is dropped.
+    """
     for prefix in ("postgresql://", "postgres://"):
         if url.startswith(prefix):
-            return "postgresql+asyncpg://" + url[len(prefix):]
-    return url
+            url = "postgresql+asyncpg://" + url[len(prefix):]
+            break
+    base, _, query = url.partition("?")
+    if not query:
+        return url
+    params = [(k, v) for k, v in parse_qsl(query, keep_blank_values=True) if k != "channel_binding"]
+    params = [("ssl" if k == "sslmode" else k, v) for k, v in params]
+    return f"{base}?{urlencode(params)}" if params else base
 
 
 def make_engine(url: str) -> AsyncEngine:
