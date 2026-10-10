@@ -26,7 +26,8 @@ from backend.entities import EntityMap, load_entity_map
 log = logging.getLogger("enrichment")
 
 
-async def sweep(engine, entity_map: EntityMap, batch: int, concurrency: int, threshold: float) -> int:
+async def sweep(engine, entity_map: EntityMap, batch: int, concurrency: int, threshold: float,
+                category_threshold: float) -> int:
     """Enrich one batch of markets. Returns how many were picked up."""
     markets = await db.markets_to_enrich(engine, entity_map.version, batch)
     if not markets:
@@ -40,7 +41,7 @@ async def sweep(engine, entity_map: EntityMap, batch: int, concurrency: int, thr
         source, market_id = market["source"], market["market_id"]
         async with slots:
             try:
-                symbols = await asyncio.to_thread(enrich_market, market, entity_map, threshold)
+                symbols = await asyncio.to_thread(enrich_market, market, entity_map, threshold, category_threshold)
             except (JevError, ValueError) as e:
                 failed[source] += 1
                 log.warning("Enrichment failed for %s %s: %s", source, market_id, e)
@@ -64,6 +65,7 @@ async def main(once: bool) -> None:
     batch = int(os.environ.get("ENRICH_BATCH") or 100)
     concurrency = int(os.environ.get("ENRICH_CONCURRENCY") or 4)
     threshold = float(os.environ.get("ENRICH_THRESHOLD") or 0.5)
+    category_threshold = float(os.environ.get("ENRICH_CATEGORY_THRESHOLD") or 0.3)
     sweep_s = float(os.environ.get("ENRICH_SWEEP_S") or 60)
     entity_map = load_entity_map()
     try:
@@ -75,7 +77,7 @@ async def main(once: bool) -> None:
     try:
         while True:
             try:
-                picked = await sweep(engine, entity_map, batch, concurrency, threshold)
+                picked = await sweep(engine, entity_map, batch, concurrency, threshold, category_threshold)
             except (SQLAlchemyError, OSError) as e:
                 log.warning("Sweep failed, will retry: %s", e)
                 picked = 0

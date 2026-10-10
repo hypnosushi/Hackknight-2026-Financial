@@ -1,5 +1,5 @@
 from backend.classification import ClassificationResult, JevError
-from backend.enrichment.enrich import ENTITY_QUESTION, enrich_market, market_text
+from backend.enrichment.enrich import ENTITY_QUESTION, ENTITY_QUESTIONS, enrich_market, market_text
 from backend.entities import CATEGORIES, EntityMap, MapEntity
 
 import pytest
@@ -69,3 +69,22 @@ def test_jev_errors_propagate_for_the_worker_to_record():
 
     with pytest.raises(JevError):
         enrich_market(MARKET, MAP, classify_fn=failing)
+
+
+def test_categories_use_the_lower_threshold_and_entities_the_stricter_one():
+    jev = FakeJev({})
+    enrich_market(MARKET, MAP, threshold=0.6, category_threshold=0.25, classify_fn=jev)
+    assert jev.specs[0].threshold == 0.25
+
+    jev = FakeJev({"company": ["company"]})
+    enrich_market(MARKET, MAP, threshold=0.6, category_threshold=0.25, classify_fn=jev)
+    assert jev.specs[1].threshold == 0.6
+
+
+def test_country_question_counts_places_in_the_country():
+    country_map = EntityMap(version=1, entities=[MapEntity(symbol="United States", name="United States",
+                                                           category="country")])
+    jev = FakeJev({"company": ["country"]})
+    enrich_market({"market_id": "W", "title": "Highest temperature in NYC?"}, country_map, classify_fn=jev)
+    assert jev.specs[1].question == ENTITY_QUESTIONS["country"]
+    assert "city" in ENTITY_QUESTIONS["country"] and "city" in CATEGORIES["country"]

@@ -21,7 +21,8 @@ DEFAULT_MAP_PATH = Path(__file__).parent / "data" / "entity_map.json"
 # Category -> what it covers, worded for Jev's category pass.
 CATEGORIES: dict[str, str] = {
     "company": "a specific publicly traded company",
-    "country": "a specific country, its government, economy or policy",
+    "country": "a specific country, its government, economy or policy, or a place in it such as a city, "
+               "state or region",
     "sector": "an industry or sector of the economy",
     "event": "an event such as an election, economic data release, central bank decision, "
              "war, disaster, regulation, or corporate event like earnings or a merger",

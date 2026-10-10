@@ -33,8 +33,12 @@ Needs `DATABASE_URL` and `OPENROUTER` in `.env`. Optional settings are listed in
    under the current one. Markets never picked up come first. The batch is marked `pending`.
 3. Per market (`ENRICH_CONCURRENCY` at a time): pass 1 asks Jev which of the 6 categories
    apply, then pass 2 asks, for each chosen category, which of its ~50 entities apply. Both are
-   `multi_select`: one yes/no question per option, one call per pass, kept at or above
-   `ENRICH_THRESHOLD`. The cost is 1 call plus 1 per chosen category.
+   `multi_select`: one yes/no question per option, one call per pass. A market keeps every
+   category at or above `ENRICH_CATEGORY_THRESHOLD` (0.3), so it can fill several, and every
+   entity at or above `ENRICH_THRESHOLD` (0.5). The low first bar only costs extra pass-2 calls,
+   since each entity is still checked on its own. The cost is 1 call plus 1 per chosen category.
+   Places count for their country: a market about NYC is asked about, and can be tagged,
+   United States.
 4. Success: in one transaction, this market's links to map entities in `market_entities` are
    replaced and the status becomes `done` with the map version. Links to companies outside the
    map (written by company graph F7) are left alone. Failure: status `failed`, with the error
