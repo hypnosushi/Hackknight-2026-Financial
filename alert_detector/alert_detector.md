@@ -16,7 +16,9 @@ news and the graph DB.
 
 ## Run
 
-The ingestion worker must be running, because the detector reads its tables.
+The ingestion workers must be running, because the detector reads their tables.
+The baseline job (`python -m baselines`, see `baselines/baselines.md`) must have run
+at least once: without a baseline, a market's signals say "no baseline yet".
 From the repo root:
 
 ```
@@ -27,31 +29,31 @@ uv run python -m alert_detector --explain --source polymarket  # same, one sourc
 
 How it runs:
 
-- **Startup.** Loads the last ~2h50m of prices and trades into memory.
+- **Startup.** Loads the last 20 minutes of prices and trades into memory,
+  plus every market's baseline from `market_baselines`.
 - **Every second (`POLL_S`).** Reads the new rows (`id > last seen`) and
   re-evaluates every market that got one.
-- **Baselines.** Typical volatility, normal volume and the whale threshold
-  are cached per market and recomputed at most once a minute.
-- **Every minute.** Reloads market metadata, drops old data, and logs one line:
+- **Every minute.** Reloads market metadata and baselines, drops old data, and logs one line:
   evaluations, candidates and alerts written.
 
 ## The four signals, in plain words
 
-The window is the last 5 minutes. All "normal" levels come from the 2.5 hours
-before the window.
+The window is the last 5 minutes. All "normal" levels come from `market_baselines`,
+computed from days of history by the baseline job and refreshed every 8 hours.
 
 1. **Price move.** How far the midpoint moved in 5 minutes, divided by how far
    it usually moves in 5 minutes. That gives a z-score; it fires at |z| ≥ 3.
    - Only good quotes count: both sides have orders and the spread is ≤ 10 pts.
    - Skipped when a reconnect gap falls in the window, when the price is pinned
-     near 0 or 1, or before 30 minutes of history exist.
+     near 0 or 1, or when the baseline has fewer than 30 five-minute samples.
    - Typical movement has a floor of 1 point, so a tiny wiggle in a dead market
      doesn't look huge.
 2. **Volume burst.** Dollars traded in the window compared with the normal
    dollars per 5 minutes. Fires at 5× normal and at least $300.
    - Dollars, not contracts: 10,000 contracts at $0.01 is only $100.
 3. **Whale.** Any single order bigger than this market's 99th-percentile order
-   size (at least $500). It uses a flat $1,000 when there's too little history.
+   size, from the baseline (at least $500). It uses a flat $1,000 when the
+   baseline has fewer than 50 orders.
    - Several fills with the same timestamp and side count as one order.
    - Block trades are flagged.
 4. **Imbalance.** What share of the window's taker dollars bought the same
@@ -119,7 +121,7 @@ uv run python -m alert_detector.demo --cleanup   # delete all demo data afterwar
 
 | Scenario | Fake data | Expected |
 |---|---|---|
-| PRICE | Midpoint jumps 0.40 → 0.48 on a flat history | `price_move` |
+| PRICE | Midpoint jumps 0.40 → 0.48 where 5-min moves are usually 1 pt | `price_move` |
 | WHALE | One $2,000 order where orders are usually $40 | `whale` |
 | BURST | $820 in 5 min (usually ~$10), 98% YES-buying | `volume_burst`, `imbalance` |
 | ALL | Price jump + burst + $1,500 order + one-sided buying | all four |
@@ -136,8 +138,8 @@ writes its own copy of every alert.
 
 Every threshold can be set in `.env` (see the "Alert detector" section of
 `.env.example`). Real moves may not happen during a demo, so lower them, e.g.
-`Z_MIN=1.5 BURST_RATIO=2`, and restart. `BASELINE_HOURS` must leave room inside
-the ingestion's 3-hour retention.
+`Z_MIN=1.5 BURST_RATIO=2`, and restart. `WINDOW_MIN` + `LOOKBACK_MIN` must fit
+inside the ingestion's 30-minute retention.
 
 ## Verify
 

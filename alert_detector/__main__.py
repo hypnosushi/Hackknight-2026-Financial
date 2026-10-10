@@ -40,6 +40,7 @@ async def main(explain: bool, source: str | None = None) -> None:
     detector = Detector(cfg, state)
     await db.load_initial(engine, state, time.time() - cfg.history_s)
     detector.markets = await db.load_markets(engine)
+    detector.baselines = await db.load_baselines(engine)
 
     if explain:
         print_explain(detector, time.time(), source)
@@ -48,8 +49,10 @@ async def main(explain: bool, source: str | None = None) -> None:
 
     for key, t, score in await db.recent_alerts(engine, cfg.cooldown_s):
         detector.cooldown[key] = (t, score)
-    log.info("Loaded %d markets with data, %d active; watching for new rows",
-             len(state.markets), len(detector.markets))
+    log.info("Loaded %d markets with data, %d active, %d with baselines; watching for new rows",
+             len(state.markets), len(detector.markets), len(detector.baselines))
+    if not detector.baselines:
+        log.warning("No baselines yet: run `python -m baselines` or every signal will say 'no baseline yet'")
 
     written = 0
     was_stale = False
@@ -71,6 +74,8 @@ async def main(explain: bool, source: str | None = None) -> None:
 
     async def reload_markets() -> None:
         detector.markets = await db.load_markets(engine)
+        detector.baselines = await db.load_baselines(engine)
+    detector.baselines = await db.load_baselines(engine)
 
     async def prune() -> None:
         detector.prune(time.time())
@@ -134,6 +139,12 @@ def format_evaluation(e: Evaluation, cfg) -> str:
     head = f"[{e.source}] {e.market_id}  score {e.score:.2f}\n  {name[:110]}\n"
     if e.skip:
         return f"{head}  SKIPPED: {e.skip}\n"
+    b = e.baseline
+    if b is None:
+        head += "  baseline:  none yet (python -m baselines computes it)\n"
+    else:
+        age_h = (time.time() - b.computed_at.timestamp()) / 3600
+        head += f"  baseline:  {age_h:.1f} h old, {float(b.history_minutes) / 60:.0f} h of history ({b.method})\n"
     pm, vb, wh, im = e.price, e.volume, e.whale, e.imbalance
     flag = lambda fired: "FIRES" if fired else "no"
     lines = [f"{head}  {'CANDIDATE ' + ','.join(e.reasons) if e.candidate else 'not a candidate'}"]

@@ -1,9 +1,9 @@
 from datetime import datetime, timezone
+from decimal import Decimal
 from itertools import count
 from types import SimpleNamespace
 
 import pytest
-from decimal import Decimal
 
 from alert_detector import signals as sig
 from alert_detector.config import Config
@@ -26,8 +26,18 @@ def price_row(market_id, t, mid, snapshot=False, size=10, source="kalshi"):
 
 
 def flat_quotes(mid=0.5, until=NOW - 60):
-    """A quote every 5 minutes across the whole history, all at the same mid."""
+    """A quote every 5 minutes across the live history the detector keeps, all at the same mid."""
     return [(t, mid) for t in range(int(NOW - CFG.history_s), int(until), 300)]
+
+
+def baseline(sigma=0.01, samples=800, volume=50.0, minutes=3 * 24 * 60, p99=40.0, orders=600):
+    """A market_baselines row: "normal" computed from days of history."""
+    return SimpleNamespace(sigma_5m=sigma, sigma_samples=samples, volume_per_window=volume,
+                           history_minutes=minutes, whale_p99=p99, whale_orders=orders,
+                           computed_at=_dt(NOW - 3600), method="test")
+
+
+SIGMA = (0.01, 800)  # baseline_sigma(baseline(), CFG)
 
 
 def trade(t, notional, side="yes", block=False):
@@ -49,6 +59,7 @@ def setup_detector(moves: dict, event="EV", close_in=86400, now=NOW):
         detector.markets[(source, market_id)] = {
             "source": source, "market_id": market_id, "event_id": event, "title": "Title",
             "outcome_label": market_id, "close_time": _dt(now + close_in)}
+        detector.baselines[(source, market_id)] = baseline()
     return state, detector
 
 
@@ -80,26 +91,33 @@ def test_quiet_market_uses_last_value_before_t():
 # --- ① Price move ------------------------------------------------------------------
 def test_snapshot_in_window_skips_price_signal():
     quotes = flat_quotes() + [(NOW - 30, 0.60)]
-    r = sig.price_move(quotes, [NOW - 60], NOW, CFG)
+    r = sig.price_move(quotes, [NOW - 60], NOW, CFG, SIGMA)
     assert r.skip == "reconnect gap in window" and not r.fired
 
 
 def test_pinned_price_skipped():
     quotes = flat_quotes(mid=0.02) + [(NOW - 30, 0.03)]
-    assert sig.price_move(quotes, [], NOW, CFG).skip == "pinned near 0 or 1"
+    assert sig.price_move(quotes, [], NOW, CFG, SIGMA).skip == "pinned near 0 or 1"
 
 
-def test_warm_up_skips_price_signal():
-    quotes = [(t, 0.5) for t in range(int(NOW - 20 * 60), int(NOW - 60), 60)] + [(NOW - 30, 0.6)]
-    r = sig.price_move(quotes, [], NOW, CFG)
-    assert r.skip.startswith("warm-up") and r.z is None
+def test_thin_history_skips_price_signal():
+    quotes = flat_quotes() + [(NOW - 30, 0.6)]
+    r = sig.price_move(quotes, [], NOW, CFG, sig.baseline_sigma(baseline(samples=12), CFG))
+    assert r.skip == "thin history: 12/30 samples" and r.z is None
+
+
+def test_no_baseline_skips_every_baseline_signal():
+    quotes = flat_quotes() + [(NOW - 30, 0.9)]
+    assert sig.price_move(quotes, [], NOW, CFG, sig.baseline_sigma(None, CFG)).skip == "no baseline yet"
+    assert sig.volume_burst([trade(NOW - 10, 5000)], sig.baseline_volume(None), CFG).skip == "no baseline yet"
+    assert sig.whale([trade(NOW - 10, 5000)], sig.whale_threshold(None, CFG)).skip == "no baseline yet"
 
 
 def test_sigma_floor_applied():
     quotes = flat_quotes() + [(NOW - 30, 0.52)]
-    r = sig.price_move(quotes, [], NOW, CFG)
+    r = sig.price_move(quotes, [], NOW, CFG, sig.baseline_sigma(baseline(sigma=0.002), CFG))
     assert r.sigma == CFG.sigma_floor
-    assert r.z == pytest.approx(2.0)  # 2 points / 1-point floor, not infinity
+    assert r.z == pytest.approx(2.0)  # 2 points / 1-point floor, not 10
 
 
 # --- Trades --------------------------------------------------------------------------
@@ -115,18 +133,23 @@ def test_same_timestamp_fills_aggregated():
     assert big.notional == 300 and big.is_block
 
 
-def test_whale_excluded_from_its_own_baseline():
-    trades = [trade(NOW - 3600 - i * 60, 600) for i in range(60)] + [trade(NOW - 60, 5000)]
-    baseline = sig.aggregate_orders(sig.trades_between(trades, NOW - CFG.baseline_s, NOW - CFG.window_s))
-    threshold = sig.whale_threshold(baseline, CFG)
-    assert threshold == pytest.approx(600)  # the $5,000 order didn't raise the bar
-    window = sig.aggregate_orders(sig.trades_between(trades, NOW - CFG.window_s, NOW))
-    assert sig.whale(window, threshold).fired
+def test_whale_threshold_is_baseline_p99_with_floor():
+    assert sig.whale_threshold(baseline(p99=1392.0), CFG) == pytest.approx(1392.0)
+    assert sig.whale_threshold(baseline(p99=40.0), CFG) == CFG.whale_floor  # $40 p99 -> $500 floor
+    assert sig.whale([trade(NOW - 60, 5000)], sig.whale_threshold(baseline(p99=1392.0), CFG)).fired
+    assert not sig.whale([trade(NOW - 60, 1200)], sig.whale_threshold(baseline(p99=1392.0), CFG)).fired
 
 
 def test_thin_market_uses_whale_thin():
-    baseline = [trade(NOW - 3600 - i, 2000) for i in range(10)]
-    assert sig.whale_threshold(baseline, CFG) == CFG.whale_thin
+    assert sig.whale_threshold(baseline(orders=10), CFG) == CFG.whale_thin
+
+
+def test_volume_burst_against_baseline():
+    window = [trade(NOW - 60 * i, 100) for i in range(1, 7)]  # $600 in the window
+    r = sig.volume_burst(window, sig.baseline_volume(baseline(volume=100.0)), CFG)
+    assert r.ratio == pytest.approx(6.0) and r.fired
+    thin = sig.volume_burst(window, sig.baseline_volume(baseline(volume=100.0, minutes=30)), CFG)
+    assert thin.skip == "thin history: 30/60 min" and not thin.fired
 
 
 def test_imbalance_needs_min_notional_and_orders():
@@ -196,3 +219,11 @@ def test_sources_never_mix():
     assert poly["mid_now"] == Decimal("0.55") and poly["summary"].startswith("[Polymarket] ")
     # Kalshi's cooldown doesn't block a new Polymarket alert, and vice versa.
     assert set(detector.cooldown) == {"kalshi:EV", "polymarket:EV"}
+
+
+def test_market_without_baseline_never_alerts():
+    _, detector = setup_detector({"A": 0.90})  # a 40-point jump
+    detector.baselines.clear()
+    e = detector.evaluate(K("A"), NOW)
+    assert e.price.skip == "no baseline yet" and not e.candidate
+    assert detector.process({K("A")}, NOW) == []

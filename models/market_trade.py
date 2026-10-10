@@ -8,7 +8,7 @@ from models.base import Base
 
 
 class MarketTrade(Base):
-    """One row per executed trade, from the YES point of view. Kept for 3 hours."""
+    """One row per executed trade, from the YES point of view. Kept for 30 minutes, then rolled up into market_hourly."""
 
     __tablename__ = "market_trades"
     __table_args__ = (

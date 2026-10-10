@@ -6,9 +6,10 @@ from sqlalchemy import insert, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ingestion.common.db import connect  # same engine setup; creates any missing tables (incl. alerts)
-from models import Alert, Market, MarketPrice, MarketTrade
+from models import Alert, Market, MarketBaseline, MarketPrice, MarketTrade
 
-__all__ = ["connect", "load_initial", "poll_new", "load_markets", "recent_alerts", "insert_alert"]
+__all__ = ["connect", "load_initial", "poll_new", "load_markets", "load_baselines", "recent_alerts",
+           "insert_alert"]
 
 PAGE = 20_000
 PRICE_FIELDS = (MarketPrice.id, MarketPrice.source, MarketPrice.market_id, MarketPrice.timestamp, MarketPrice.yes_bid,
@@ -60,6 +61,13 @@ async def load_markets(engine: AsyncEngine) -> dict[tuple, dict]:
     async with engine.connect() as conn:
         rows = await conn.execute(select(Market).where(Market.status == "active"))
         return {(r.source, r.market_id): dict(r._mapping) for r in rows}
+
+
+async def load_baselines(engine: AsyncEngine) -> dict[tuple, object]:
+    """market_baselines rows (written by python -m baselines), by (source, market_id)."""
+    async with engine.connect() as conn:
+        rows = await conn.execute(select(MarketBaseline))
+        return {(r.source, r.market_id): r for r in rows}
 
 
 async def recent_alerts(engine: AsyncEngine, seconds: float) -> list[tuple[str, float, float]]:

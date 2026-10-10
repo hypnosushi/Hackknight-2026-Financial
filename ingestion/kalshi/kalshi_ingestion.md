@@ -2,7 +2,9 @@
 
 Streams live Kalshi ticker updates (price, bid/ask, sizes, volume) and every
 executed trade (size, price, taker side) for the markets in `KALSHI_SERIES`
-into Postgres, keeping the last 3 hours.
+into Postgres. Live rows are kept for 30 minutes. Before they are deleted, they're
+rolled up into hourly summaries in `market_hourly` (kept 14 days). Each market's
+"normal" lives in `market_baselines`, computed by `python -m baselines`.
 
 - `kalshi.py`: request signing, REST market discovery, WebSocket ticker + trade stream
 - `__main__.py`: entry point. Discovery plus the session; everything else is shared

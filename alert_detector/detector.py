@@ -27,6 +27,7 @@ class Evaluation:
     candidate: bool = False
     score: float = 0.0
     direction: str | None = None
+    baseline: object = None  # the market_baselines row used, if any
 
 
 class Detector:
@@ -37,7 +38,7 @@ class Detector:
         self.cooldown: dict[str, tuple[float, float]] = {}  # event key -> (time, score) of last alert
         self.stale = False
         self.evaluated = self.candidates = 0  # counters for the stats log
-        self._cache: dict[tuple, tuple] = {}  # ((source, market_id), kind) -> (minute, value)
+        self.baselines: dict[tuple, object] = {}  # market_baselines rows, by (source, market_id)
 
     # --- Per market -------------------------------------------------------------
     def evaluate(self, key: tuple, now: float) -> Evaluation | None:
@@ -54,19 +55,13 @@ class Detector:
 
         cfg, w = self.cfg, self.cfg.window_s
         self.evaluated += 1
-        # Baselines change slowly, so compute them at most once a minute per market.
-        sigma = self._cached(key, "sigma", now,
-                             lambda: sig.compute_sigma(buf.quotes, buf.snapshots, now, cfg))
-        vol_base = self._cached(key, "volume", now,
-                                lambda: sig.volume_baseline(buf.trades, buf.first_seen, now, cfg))
-        whale_bar = self._cached(key, "whale", now, lambda: sig.whale_threshold(
-            sig.aggregate_orders(sig.trades_between(buf.trades, now - cfg.baseline_s, now - w)), cfg))
-
+        # "Normal" comes from days of history (python -m baselines), not from the live buffer.
+        b = e.baseline = self.baselines.get(key)
         window_trades = sig.trades_between(buf.trades, now - w, now)
         e.window_orders = sig.aggregate_orders(window_trades)
-        e.price = sig.price_move(buf.quotes, buf.snapshots, now, cfg, sigma)
-        e.volume = sig.volume_burst(window_trades, vol_base, cfg)
-        e.whale = sig.whale(e.window_orders, whale_bar)
+        e.price = sig.price_move(buf.quotes, buf.snapshots, now, cfg, sig.baseline_sigma(b, cfg))
+        e.volume = sig.volume_burst(window_trades, sig.baseline_volume(b), cfg)
+        e.whale = sig.whale(e.window_orders, sig.whale_threshold(b, cfg))
         e.imbalance = sig.imbalance(e.window_orders, cfg)
         self._escalate(e)
         return e
@@ -88,14 +83,6 @@ class Detector:
             e.direction = "yes_up" if pm.change > 0 else "yes_down"
         elif im.side or wh.side:
             e.direction = "yes_up" if (im.side or wh.side) == "yes" else "yes_down"
-
-    def _cached(self, key: tuple, kind: str, now: float, compute):
-        minute = int(now // 60)
-        hit = self._cache.get((key, kind))
-        if hit is None or hit[0] != minute:
-            hit = (minute, compute())
-            self._cache[(key, kind)] = hit
-        return hit[1]
 
     # --- Across markets -----------------------------------------------------------
     def process(self, changed: set[tuple], now: float) -> list[dict]:
@@ -134,7 +121,6 @@ class Detector:
 
     def prune(self, now: float) -> None:
         self.state.prune(now)
-        self._cache = {k: v for k, v in self._cache.items() if k[0] in self.state.markets}
 
     # --- Output ----------------------------------------------------------------------
     def build_alert(self, e: Evaluation, related: list[Evaluation], now: float) -> dict:
@@ -160,6 +146,12 @@ class Detector:
                                 for r in related],
             "thresholds": {"z_min": self.cfg.z_min, "burst_ratio": self.cfg.burst_ratio,
                            "whale_threshold": _round(wh.threshold, 2)},
+            "baseline": None if e.baseline is None else {  # the "normal" this move was judged against
+                "computed_at": e.baseline.computed_at.isoformat(), "method": e.baseline.method,
+                "typical_5m_move": _round(_float(e.baseline.sigma_5m), 4),
+                "normal_volume_per_5m": _round(_float(e.baseline.volume_per_window), 2),
+                "history_hours": _round(_float(e.baseline.history_minutes) / 60, 1),
+                "whale_p99": _round(_float(e.baseline.whale_p99), 2)},
         }
         return {
             "source": e.source,
@@ -240,3 +232,7 @@ def _round(x, places):
 
 def _dec(x, places) -> Decimal | None:
     return None if x is None else Decimal(str(round(x, places)))
+
+
+def _float(x) -> float | None:
+    return None if x is None else float(x)

@@ -8,13 +8,14 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from models import Base, Market, MarketPrice, MarketTrade
+from models import Base, Market, MarketHourly, MarketPrice, MarketTrade
 
 log = logging.getLogger(__name__)
 
 MAX_QUEUE = 100_000  # per table
 UPSERT_CHUNK = 1000  # keeps each statement under Postgres' bind-parameter limit
-RETENTION = "3 hours"
+RETENTION = "30 minutes"  # live rows; "normal" comes from market_baselines (python -m baselines)
+HOURLY_RETENTION = "14 days"
 DEMO_SERIES = "KXDEMO"  # fake markets from alert_detector.demo; workers never close them
 PRICE_COLUMNS = ["source", "market_id", "timestamp", "price_or_odds", "yes_bid", "yes_ask",
                  "yes_bid_size", "yes_ask_size", "volume", "open_interest", "snapshot"]
@@ -79,11 +80,45 @@ async def close_markets(engine: AsyncEngine, source: str, market_ids: list[str])
                            .values(status="closed", updated_at=func.now()))
 
 
+# Each statement deletes expired rows and adds them to market_hourly in one go, so
+# every row is counted exactly once, even when several workers run this at once.
+_ROLL_UP_TRADES = text(f"""
+WITH gone AS (
+  DELETE FROM market_trades WHERE timestamp < now() - interval '{RETENTION}'
+  RETURNING source, market_id, timestamp, taker_side,
+            count * CASE WHEN taker_side = 'yes' THEN yes_price ELSE 1 - yes_price END AS notional
+), orders AS (  -- fills with the same time and side are one order (same rule as the detector)
+  SELECT source, market_id, date_trunc('hour', timestamp) AS hour, sum(notional) AS notional
+  FROM gone GROUP BY source, market_id, timestamp, taker_side
+)
+INSERT INTO market_hourly AS h (source, market_id, hour, notional, orders, order_sizes)
+SELECT source, market_id, hour, sum(notional), count(*), array_agg(notional)
+FROM orders GROUP BY source, market_id, hour
+ON CONFLICT (source, market_id, hour) DO UPDATE SET
+  notional = h.notional + EXCLUDED.notional,
+  orders = h.orders + EXCLUDED.orders,
+  order_sizes = h.order_sizes || EXCLUDED.order_sizes
+""")
+_ROLL_UP_PRICES = text(f"""
+WITH gone AS (
+  DELETE FROM market_prices WHERE timestamp < now() - interval '{RETENTION}'
+  RETURNING source, market_id, timestamp, snapshot
+)
+INSERT INTO market_hourly AS h (source, market_id, hour, quote_rows)
+SELECT source, market_id, date_trunc('hour', timestamp), count(*)
+FROM gone WHERE NOT snapshot  -- snapshot timestamps can be hours old
+GROUP BY source, market_id, date_trunc('hour', timestamp)
+ON CONFLICT (source, market_id, hour) DO UPDATE SET quote_rows = h.quote_rows + EXCLUDED.quote_rows
+""")
+
+
 async def delete_old_rows(engine: AsyncEngine) -> None:
+    """Retention: roll expired live rows up into market_hourly, then drop old hourly rows."""
     async with engine.begin() as conn:
-        for model in (MarketPrice, MarketTrade):
-            await conn.execute(delete(model).where(
-                model.timestamp < text(f"now() - interval '{RETENTION}'")))
+        await conn.execute(_ROLL_UP_TRADES)
+        await conn.execute(_ROLL_UP_PRICES)
+        await conn.execute(delete(MarketHourly).where(
+            MarketHourly.hour < text(f"now() - interval '{HOURLY_RETENTION}'")))
 
 
 class _Queue:

@@ -8,7 +8,7 @@ from models.base import Base
 
 
 class MarketPrice(Base):
-    """One row per quote update (Kalshi ticker, Polymarket best bid/ask). Kept for 3 hours."""
+    """One row per quote update (Kalshi ticker, Polymarket best bid/ask). Kept for 30 minutes, then rolled up into market_hourly."""
 
     __tablename__ = "market_prices"
     __table_args__ = (
