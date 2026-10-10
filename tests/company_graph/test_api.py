@@ -140,6 +140,47 @@ class FakeBuild:
         return LinkRunResult(symbol=symbol, status=self.outcome)
 
 
+class FakeHighlights:
+    """Stands in for highlights.build_highlights: records calls, waits for `gate`, optionally saves
+    one highlight per call (for ALB, on a TSLA contract event) or raises."""
+
+    def __init__(self, wait=False, save=False, error=None):
+        self.calls: list[str] = []
+        self.save = save
+        self.error = error
+        self.gate = threading.Event()
+        self.finished = threading.Event()
+        if not wait:
+            self.gate.set()
+
+    async def __call__(self, symbol, *, session, cfg, directory):
+        self.calls.append(symbol)
+        await asyncio.to_thread(self.gate.wait, 5)
+        try:
+            if self.error:
+                raise self.error
+            if self.save:
+                now = _now()
+                ev = GraphEvent(entity_symbol=symbol, source="news", event_type="contract", title="Cell order",
+                                url=f"https://news.example/{len(self.calls)}", occurred_at=now - timedelta(hours=2))
+                session.add(ev)
+                await session.flush()
+                session.add(GraphHighlight(event_id=ev.id, source_symbol=symbol, target_symbol="ALB",
+                                           direction="may_benefit", reason="Tesla signed a cell order.",
+                                           source_url=ev.url, event_time=ev.occurred_at))
+                await session.commit()
+        finally:
+            self.finished.set()
+        return None
+
+
+def wait_for_highlights_done():
+    for _ in range(100):  # the task's done-callback runs on the app's loop
+        if not api._HIGHLIGHT_RUNS:
+            return
+        threading.Event().wait(0.02)
+
+
 @pytest.fixture
 def engine(tmp_path):
     eng = create_engine(f"sqlite:///{tmp_path / 'graph.db'}", connect_args={"check_same_thread": False})
@@ -152,12 +193,14 @@ def engine(tmp_path):
 
 @pytest.fixture(autouse=True)
 def clean_runs():
-    api._RUNS.clear()
+    for registry in (api._RUNS, api._HIGHLIGHT_RUNS, api._HIGHLIGHTS_DONE):
+        registry.clear()
     yield
-    api._RUNS.clear()
+    for registry in (api._RUNS, api._HIGHLIGHT_RUNS, api._HIGHLIGHTS_DONE):
+        registry.clear()
 
 
-def make_app(*, cfg=None, db=None, build=None, directory=DIRECTORY):
+def make_app(*, cfg=None, db=None, build=None, directory=DIRECTORY, highlights=None):
     app = FastAPI()
     app.include_router(api.router)
     app.dependency_overrides[api.get_config] = lambda: cfg or Config()
@@ -165,6 +208,7 @@ def make_app(*, cfg=None, db=None, build=None, directory=DIRECTORY):
         app.dependency_overrides[api.get_db] = lambda: db
     app.dependency_overrides[api.get_company_directory] = lambda: directory
     app.dependency_overrides[api.get_link_builder] = lambda: build or FakeBuild()
+    app.dependency_overrides[api.get_highlight_builder] = lambda: highlights or FakeHighlights()
     return app
 
 
@@ -193,10 +237,13 @@ def test_first_request_runs_then_done_with_links(engine):
                 break
             threading.Event().wait(0.02)
 
+        # Links are done: the first such poll starts the highlight run (its own session) and says running.
+        assert client.get("/graph/TSLA").json()["status"] == "running"
+        wait_for_highlights_done()
         done = client.get("/graph/TSLA")
     body = GraphResponse.model_validate(done.json())
     assert body.status == "done"
-    assert build.calls == ["TSLA"] and db.run_sessions == 1
+    assert build.calls == ["TSLA"] and db.run_sessions == 2
     assert [n.symbol for n in body.nodes] == ["ALB", "NVDA", "F"]
     assert {n.symbol: n.type for n in body.nodes} == {"ALB": "supplier", "NVDA": "supplier", "F": "competitor"}
     assert all(n.symbol != "TSLA" for n in body.nodes)
@@ -212,10 +259,14 @@ def test_fresh_links_are_done_without_a_run(engine):
         set_run(s, "TSLA", "done", _now() - timedelta(days=1))
         s.commit()
     build = FakeBuild()
-    with TestClient(make_app(db=SqliteDb(engine), build=build)) as client:
+    highlights = FakeHighlights()
+    with TestClient(make_app(db=SqliteDb(engine), build=build, highlights=highlights)) as client:
+        first = client.get("/graph/TSLA").json()  # links are fresh; highlights have not run yet
+        wait_for_highlights_done()
         body = client.get("/graph/TSLA").json()
+    assert first["status"] == "running" and len(first["links"]) == 4
     assert body["status"] == "done" and len(body["links"]) == 4
-    assert build.calls == []
+    assert build.calls == [] and highlights.calls == ["TSLA"]
 
 
 def test_stale_links_are_returned_while_a_new_run_starts(engine):
@@ -332,8 +383,9 @@ def test_highlights_come_from_the_table_for_shown_nodes_in_the_window(engine):
 def test_f8_hook_runs_only_when_done(engine, monkeypatch):
     calls = []
 
-    async def hook(session, company, nodes, cfg):
+    async def hook(session, company, nodes, cfg, **kwargs):
         calls.append((company.symbol, [n.symbol for n in nodes]))
+        return False
 
     monkeypatch.setattr(api, "refresh_highlights", hook)
     with Session(engine) as s:
@@ -430,3 +482,129 @@ def test_run_status():
     assert api.run_status(run("error", 10), now, cfg, False) == "error"
     assert api.run_status(run("error", api.ERROR_RETRY_S + 1), now, cfg, False) == "start"
 
+
+
+# --- highlight runs (F8 through the API) ---------------------------------------------
+
+def seed_done(engine, at=None):
+    with Session(engine) as s:
+        seed_links(s)
+        set_run(s, "TSLA", "done", at or _now() - timedelta(hours=1))
+        s.commit()
+
+
+def test_highlight_run_reports_running_with_links_then_done_with_highlights(engine):
+    seed_done(engine)
+    highlights = FakeHighlights(wait=True, save=True)
+    db = SqliteDb(engine)
+    with TestClient(make_app(db=db, highlights=highlights)) as client:
+        first = client.get("/graph/TSLA").json()
+        second = client.get("/graph/TSLA").json()  # a poll while it runs: no second run
+        highlights.gate.set()
+        assert highlights.finished.wait(5)
+        wait_for_highlights_done()
+        done = GraphResponse.model_validate(client.get("/graph/TSLA").json())
+    for body in (first, second):
+        assert body["status"] == "running" and len(body["links"]) == 4 and body["highlights"] == []
+    assert highlights.calls == ["TSLA"] and db.run_sessions == 1  # its own session
+    assert done.status == "done"
+    assert [(h.target, h.direction, h.event_type) for h in done.highlights] == [("ALB", "may_benefit", "contract")]
+
+
+def test_highlights_run_at_most_once_per_news_ttl(engine):
+    seed_done(engine)
+    highlights = FakeHighlights()
+    with TestClient(make_app(db=SqliteDb(engine), highlights=highlights)) as client:
+        assert client.get("/graph/TSLA").json()["status"] == "running"
+        wait_for_highlights_done()
+        assert client.get("/graph/TSLA").json()["status"] == "done"
+        assert client.get("/graph/TSLA").json()["status"] == "done"
+        assert highlights.calls == ["TSLA"]
+        # Older than GRAPH_NEWS_TTL_HOURS: the next request starts one new run.
+        api._HIGHLIGHTS_DONE["TSLA"] = (_now() - timedelta(hours=Config().graph_news_ttl_hours + 1), True)
+        assert client.get("/graph/TSLA").json()["status"] == "running"
+        wait_for_highlights_done()
+    assert highlights.calls == ["TSLA", "TSLA"]
+
+
+def test_failed_highlight_run_still_returns_done_links(engine):
+    seed_done(engine)
+    highlights = FakeHighlights(error=RuntimeError("model down"))
+    with TestClient(make_app(db=SqliteDb(engine), highlights=highlights)) as client:
+        assert client.get("/graph/TSLA").json()["status"] == "running"
+        assert highlights.finished.wait(5)
+        wait_for_highlights_done()
+        body = client.get("/graph/TSLA").json()
+        assert body["status"] == "done" and len(body["links"]) == 4
+        assert highlights.calls == ["TSLA"]
+        # A failed run is retried after ERROR_RETRY_S, not after the news TTL.
+        api._HIGHLIGHTS_DONE["TSLA"] = (_now() - timedelta(seconds=api.ERROR_RETRY_S + 1), False)
+        assert client.get("/graph/TSLA").json()["status"] == "running"
+        wait_for_highlights_done()
+    assert highlights.calls == ["TSLA", "TSLA"]
+
+
+def test_highlight_builder_that_cannot_start_never_errors(engine, monkeypatch):
+    seed_done(engine)
+
+    def broken(*a, **k):
+        raise RuntimeError("no event loop")
+
+    monkeypatch.setattr(api, "start_highlight_run", broken)
+    with TestClient(make_app(db=SqliteDb(engine))) as client:
+        body = client.get("/graph/TSLA").json()
+    assert body["status"] == "done" and len(body["links"]) == 4
+
+
+def test_graph_without_links_starts_no_highlight_run(engine):
+    with Session(engine) as s:
+        set_run(s, "TSLA", "done", _now())
+        s.commit()
+    highlights = FakeHighlights()
+    with TestClient(make_app(db=SqliteDb(engine), highlights=highlights)) as client:
+        assert client.get("/graph/TSLA").json()["status"] == "done"
+    assert highlights.calls == []
+
+
+def test_no_highlight_run_while_links_are_running(engine):
+    with Session(engine) as s:
+        seed_links(s)
+        set_run(s, "TSLA", "running", _now())
+        s.commit()
+    highlights = FakeHighlights()
+    with TestClient(make_app(db=SqliteDb(engine), highlights=highlights)) as client:
+        assert client.get("/graph/TSLA").json()["status"] == "running"
+    assert highlights.calls == []
+
+
+def test_real_highlight_builder_through_the_api(engine, tmp_path):
+    """The default builder (highlights.build_highlights) with fake inputs, end to end."""
+    from functools import partial
+
+    from company_graph import highlights as graph_highlights
+
+    seed_done(engine)
+    with Session(engine) as s:
+        s.add(GraphEvent(entity_symbol="TSLA", source="news", event_type="product_launch",
+                         title="Tesla unveils a new battery pack", url="https://news.example/pack",
+                         occurred_at=_now() - timedelta(hours=3)))
+        s.commit()
+
+    def model(system, user, response_model, model=None):
+        return response_model(involved=[
+            graph_highlights.Involvement(symbol="ALB", reason="Albemarle supplies lithium for Tesla's battery packs."),
+            graph_highlights.Involvement(symbol="F", reason="Ford sells EVs that compete with Tesla's."),
+        ])
+
+    async def no_refresh(session, symbols, **kw):
+        return []
+
+    build = partial(graph_highlights.build_highlights, refresh_news=no_refresh, refresh_market=no_refresh,
+                    complete=model, price_gateway=None, store=graph_highlights.EvalStore(tmp_path / "evals.json"))
+    with TestClient(make_app(db=SqliteDb(engine), highlights=build)) as client:
+        assert client.get("/graph/TSLA").json()["status"] == "running"
+        wait_for_highlights_done()
+        body = GraphResponse.model_validate(client.get("/graph/TSLA").json())
+    assert body.status == "done"
+    assert sorted((h.target, h.direction) for h in body.highlights) == [("ALB", "may_benefit"), ("F", "may_face_pressure")]
+    assert all(h.source_url == "https://news.example/pack" and h.price_change_pct is None for h in body.highlights)

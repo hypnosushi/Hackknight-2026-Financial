@@ -19,7 +19,15 @@ At most one task per company runs in this process (`_RUNS`); across processes bu
 itself skips a company whose run is in progress.
 
 Highlights are read from `graph_highlights` (newest first, only for the returned nodes, within
-GRAPH_EVENT_WINDOW_DAYS). F8 plugs into `refresh_highlights` below, called when status is "done".
+GRAPH_EVENT_WINDOW_DAYS). Once the links are done, `refresh_highlights` starts F8's
+`highlights.build_highlights` as an in-process task with its own session (`run_session`):
+  - at most one highlight task per company in this process (`_HIGHLIGHT_RUNS`);
+  - at most once per GRAPH_NEWS_TTL_HOURS per company after a run that finished, or once per
+    ERROR_RETRY_S after one that raised (`_HIGHLIGHTS_DONE`, in memory: a restart allows one new
+    run, and F6's news cache and F8's evaluation file keep that cheap);
+  - while it runs the response says "running" (with the links and the highlights stored so far),
+    so the page keeps polling; then "done" with the new highlights.
+A failure in highlight building is logged and never turns a good links graph into an error.
 
 With GRAPH_FAKE=1 both endpoints serve the fixtures and touch no database and no network.
 """
@@ -39,6 +47,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from backend.models.graph_event import GraphEvent
 from backend.models.graph_highlight import GraphHighlight
 from company_graph import config as graph_config
+from company_graph import highlights as graph_highlights
 from company_graph import links as graph_links
 from company_graph.companies import Company, CompanyDirectory, get_directory
 from company_graph.schemas import (
@@ -63,6 +72,11 @@ ERROR_RETRY_S = 300  # an errored run is reported as "error" this long, then a n
 # Per-symbol link-run tasks started by this process. Holding the task also keeps it from being
 # garbage-collected while it runs.
 _RUNS: dict[str, asyncio.Task] = {}
+
+# Per-symbol highlight tasks started by this process, and when each symbol's last one ended:
+# symbol -> (ended_at, ok). Read by refresh_highlights to space runs out.
+_HIGHLIGHT_RUNS: dict[str, asyncio.Task] = {}
+_HIGHLIGHTS_DONE: dict[str, tuple[datetime, bool]] = {}
 
 
 # --- dependencies (tests override these with app.dependency_overrides) ---------------
@@ -152,6 +166,11 @@ def get_link_builder() -> Callable:
     return graph_links.build_links
 
 
+def get_highlight_builder() -> Callable:
+    """The highlight run started for a company once its links are done (highlights.build_highlights)."""
+    return graph_highlights.build_highlights
+
+
 # --- pure helpers -------------------------------------------------------------------
 
 def _iso(t: datetime) -> str:
@@ -215,20 +234,70 @@ def _empty_graph(symbol: str, name: str, status: str = "done") -> GraphResponse:
 
 # --- highlights ----------------------------------------------------------------------
 
-async def refresh_highlights(session, company: Company, nodes: list[NodeOut], cfg: graph_config.Config) -> None:
-    """F8 HOOK: make `graph_highlights` current for this graph before it is read.
+def highlights_due(symbol: str, now: datetime, cfg: graph_config.Config) -> bool:
+    """Whether a new highlight run may start for `symbol`. Pure apart from reading _HIGHLIGHTS_DONE."""
+    last = _HIGHLIGHTS_DONE.get(symbol)
+    if last is None:
+        return True
+    ended_at, ok = last
+    wait = cfg.news_ttl_s if ok else ERROR_RETRY_S
+    return (now - ended_at).total_seconds() >= wait
 
-    Called only when the links are done. Today it does nothing (F8, build_highlights, is not
-    built), so the response carries whatever rows already exist, usually none. F8 replaces
-    this body with its call, for example:
 
-        await highlights.build_highlights(session, company.symbol, [n.symbol for n in nodes], cfg=cfg)
+def _highlights_running(symbol: str) -> bool:
+    task = _HIGHLIGHT_RUNS.get(symbol)
+    return task is not None and not task.done()
 
-    If build_highlights writes, it must commit (or use its own session): the request session
-    is closed without a commit. Errors should be caught there, so a failed refresh still
-    returns the graph with the highlights already stored.
+
+def start_highlight_run(symbol: str, db, build: Callable, cfg: graph_config.Config,
+                        directory: CompanyDirectory | None) -> bool:
+    """Start build_highlights for `symbol` as a task with its own session, unless one is running in
+    this process. Returns True when a task was started. The task never raises: failures are logged."""
+    if _highlights_running(symbol):
+        return False
+
+    async def go():
+        ok = False
+        try:
+            async with db.run_session() as session:
+                result = await build(symbol, session=session, cfg=cfg, directory=directory)
+            ok = not getattr(result, "model_errors", 0)  # model failures: retry after ERROR_RETRY_S
+            log.info("highlight run for %s: %s", symbol, result)
+        except Exception:  # noqa: BLE001 - highlights are optional; the links graph stays "done"
+            log.exception("highlight run for %s failed", symbol)
+        finally:
+            _HIGHLIGHTS_DONE[symbol] = (datetime.now(timezone.utc), ok)
+
+    task = asyncio.create_task(go(), name=f"company-graph-highlights-{symbol}")
+    _HIGHLIGHT_RUNS[symbol] = task
+    task.add_done_callback(lambda t, s=symbol: _HIGHLIGHT_RUNS.pop(s, None) if _HIGHLIGHT_RUNS.get(s) is t else None)
+    return True
+
+
+async def refresh_highlights(session, company: Company, nodes: list[NodeOut], cfg: graph_config.Config, *,
+                             db=None, build: Callable | None = None,
+                             directory: CompanyDirectory | None = None, now: datetime | None = None) -> bool:
+    """Keep `graph_highlights` current for this graph. Called only when the links are done.
+
+    Returns True while a highlight run for this company is going (the request then answers
+    "running"): one already running in this process, or one this call just started because the
+    last ended more than GRAPH_NEWS_TTL_HOURS ago (ERROR_RETRY_S after a failure) or none has run.
+    A graph with no nodes has nothing to highlight. Never raises: a failure to start is logged and
+    the graph is reported "done" with the highlights already stored. `session` is unused (the run
+    gets its own session; this request's session is closed without a commit).
     """
-    return None
+    symbol = company.symbol
+    if _highlights_running(symbol):
+        return True
+    if not nodes or db is None or build is None:
+        return False
+    try:
+        if not highlights_due(symbol, now or datetime.now(timezone.utc), cfg):
+            return False
+        return start_highlight_run(symbol, db, build, cfg, directory)
+    except Exception:  # noqa: BLE001
+        log.exception("could not start the highlight run for %s", symbol)
+        return False
 
 
 async def read_highlights(session, targets: list[str], now: datetime, cfg: graph_config.Config) -> list[HighlightOut]:
@@ -297,6 +366,7 @@ async def get_graph(
     db: GraphDb | None = Depends(get_db),
     directory: CompanyDirectory | None = Depends(get_company_directory),
     build: Callable = Depends(get_link_builder),
+    build_highlights: Callable = Depends(get_highlight_builder),
 ) -> GraphResponse:
     raw = ticker.strip().lstrip("$")
     if cfg.fake:
@@ -317,8 +387,9 @@ async def get_graph(
                 status = "running"
             stored = await graph_links.read_links(session, company.symbol, cfg.graph_max_linked)
             nodes, out_links = graph_parts(company.symbol, stored)
-            if status == "done":
-                await refresh_highlights(session, company, nodes, cfg)
+            if status == "done" and await refresh_highlights(session, company, nodes, cfg, db=db,
+                                                             build=build_highlights, directory=directory, now=now):
+                status = "running"
             highlights = await read_highlights(session, [n.symbol for n in nodes], now, cfg)
     except (SQLAlchemyError, OSError) as exc:
         log.warning("graph read for %s failed: %s", company.symbol, exc)

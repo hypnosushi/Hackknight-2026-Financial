@@ -15,11 +15,13 @@ Spec: `new_specs/ingestion/company-graph-tasks.md`.
 | `trim.py` | F3 | Cuts a filing down to the passages likely to state a relationship |
 | `config.py`, `db.py`, `schemas.py`, `fixtures/` | F0 | Settings, tables, API shape, fake-mode data |
 | `llm.py`, `extract.py` | F4 | `complete` over the team's `complete_structured`; `extract` reads one passage for a relationship; `save_relationship` validates and upserts into `entity_relationships` |
-| `news_events.py` | F6 | One NewsAPI request per graph, Jev event typing, saved to `graph_events`. Entry point: `refresh_news_events` |
+| `news_events.py` | F6 | One NewsAPI request per graph, event typing (Jev, or Claude with `GRAPH_LLM_PROVIDER=anthropic`), saved to `graph_events`. Entry point: `refresh_news_events` |
 | `links.py` | F5 | `build_links(symbol)`: own 10-K, reverse full-text search, recent 8-Ks, sector fallback, into `entity_relationships`; `read_links` and `get_link_run` for the API |
 | `market_events.py` | F7 | Recent `alerts` (read-only) matched to the companies their markets name, saved to `graph_events` and `market_entities`. Entry point: `fetch_market_events` |
+| `highlights.py` | F8 | `build_highlights(symbol, session=...)`: refreshes news and market events for the graph, asks the model which linked companies each recent event involves, saves `graph_highlights` with a direction and the Alpaca price change |
+| `api.py` | F9 | `GET /graph/{ticker}` and `GET /companies/search`; starts link runs and highlight runs in the background |
 
-Not built yet: highlight builder (F8), API (F9) and demo commands (F11).
+Not built yet: demo commands (F11).
 
 ### Conventions the next features rely on
 
@@ -38,6 +40,13 @@ Not built yet: highlight builder (F8), API (F9) and demo commands (F11).
 - **What counts as a relationship (F4):** the prompt excludes landlords and leases, lenders, insurers, auditors, law firms, shareholders, lawsuit opponents, ended relationships and anything hypothetical.
 - **SEC retries (F2):** 429, 500, 502, 503 and 504 are retried with backoff.
 - **Processed filings (F5):** own filings are keyed by accession number; reverse reads by `accession#SYMBOL`, so one big 10-K can serve several companies' graphs.
+- **Event typing provider (F6):** with `GRAPH_LLM_PROVIDER=anthropic`, `classify_event` asks Claude through `llm.complete` (the same five event types plus `none`, as `EventLabel`) and needs no `OPENROUTER` key; otherwise it uses Jev as before. Labels are cached per URL in the news cache either way.
+- **Which companies an event can reach (F8):** one hop along the searched company S's links. An event about S is offered to the model with all of S's linked companies; an event about a linked company L is offered with S only (target S, so it shows wherever S is a node, such as L's graph, not on S's own page). Only companies the model names from that list get a highlight.
+- **Highlight direction (F8):** from the target's role on the link, never from the model: supplier, customer, partner -> `may_benefit`; competitor -> `may_face_pressure`; `sector_peer` -> `may_face_pressure` only when the model marks the event a direct competitive gain over that peer (`competitive_gain`), otherwise no highlight. Industry peers have no stated relationship, so only a clear win gives a defensible direction.
+- **Highlight wording (F8):** one factual sentence per highlight; reasons that read like a price prediction or trade suggestion are dropped (`highlights.is_factual`). `price_change_pct` is the past change from the last bar at or before the event to the latest bar, null when the Alpaca keys are missing, the call fails, or the company has no US ticker.
+- **Remembered evaluations (F8):** which (searched company, event) pairs the model has judged, and with which candidates, live in `.cache/company_graph/highlight_evals.json` (`EvalStore`), pruned after `GRAPH_EVENT_WINDOW_DAYS`. An event is asked about again only when the searched company has gained a linked company since, or the last call failed. Deleting the file only costs repeated model calls: a highlight is never stored twice for the same (event, target). A JSON file rather than a table because `db.create_tables` lists its tables explicitly.
+- **Highlight runs (F8, F9):** `build_highlights` commits as it goes (each refresh step, then the highlights), so give it its own session. News and market refreshes are optional: no `NEWSAPI_KEY`, no `alerts` table or any failure is logged and skipped. At most `MAX_EVENTS_PER_RUN` (40) events, newest first, go to the model per run, 4 at a time: one model call per new event.
+- **API status with highlights (F9):** once links are done, the first request (and the first after `GRAPH_NEWS_TTL_HOURS`, or `ERROR_RETRY_S` after a failed run) starts `build_highlights` as a background task with its own session and answers `running` with the links; at most one highlight task per company in a process (`api._HIGHLIGHT_RUNS`; last end times in `api._HIGHLIGHTS_DONE`, in memory). A failed highlight run is logged and the graph is `done` with the highlights already stored.
 
 ## Setup
 
@@ -50,7 +59,9 @@ OPENROUTER=...                       # model calls through backend/llm and Jev (
 GRAPH_LLM_PROVIDER=anthropic         # optional: F4/F8 call Claude directly instead of via OpenRouter
 ANTHROPIC_API_KEY=sk-ant-...         # needed when GRAPH_LLM_PROVIDER=anthropic
 # GRAPH_ANTHROPIC_MODEL=claude-haiku-5-5   # optional: cheaper than the default claude-opus-5-5
-NEWSAPI_KEY=...                      # news events (F6)
+NEWSAPI_KEY=...                      # news events (F6); without it highlights use market alerts only
+ALPACA_API_KEY_ID=...                # optional: price_change_pct on highlights (F8)
+ALPACA_API_SECRET_KEY=...
 # Optional, defaults in config.py:
 # GRAPH_LINK_TTL_DAYS=7  GRAPH_EVENT_WINDOW_DAYS=7  GRAPH_MAX_LINKED=12
 # GRAPH_NEWS_TTL_HOURS=6  GRAPH_NEWS_DAILY_BUDGET=40  GRAPH_FAKE=0  GRAPH_LLM_MODEL=...
@@ -110,4 +121,6 @@ uv run pytest tests/company_graph
 ```
 
 No test needs a network connection or a running Postgres: table tests use SQLite and also
-compile the Postgres DDL.
+compile the Postgres DDL. `tests/company_graph/conftest.py` clears the model settings and the
+`NEWSAPI_KEY`, `ALPACA_*`, `OPENROUTER` and `ANTHROPIC_API_KEY` keys for every test, and makes
+any real Anthropic, OpenRouter or Jev call fail.
