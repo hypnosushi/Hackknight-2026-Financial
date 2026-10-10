@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.schema import CreateIndex
 
 from backend.entities import EntityMap
 from backend.ingestion.common.db import DEMO_SERIES, connect
@@ -30,11 +31,15 @@ MARKET_COLUMNS = (Market.source, Market.market_id, Market.title, Market.outcome_
 async def sync_entity_map(engine: AsyncEngine, entity_map: EntityMap) -> None:
     """Insert map entities missing from `entities`. Existing rows are left alone: the company
     graph keeps company names up to date from SEC, and a renamed map entry is a new symbol.
+
+    Also adds the market_entities indexes, which create_all only builds with a new table.
     """
     stmt = pg_insert(Entity).values([{"symbol": e.symbol, "name": e.name, "type": e.category}
                                      for e in entity_map.entities])
     async with engine.begin() as conn:
         await conn.execute(stmt.on_conflict_do_nothing(index_elements=["symbol"]))
+        for index in MarketEntity.__table__.indexes:
+            await conn.execute(CreateIndex(index, if_not_exists=True))
 
 
 async def markets_to_enrich(engine: AsyncEngine, map_version: int, limit: int) -> list[dict]:

@@ -64,9 +64,11 @@ def test_table_creates_on_sqlite():
 def test_sync_inserts_map_entities_without_overwriting():
     engine = RecordingEngine()
     run(db.sync_entity_map(engine, MAP))
-    (sql,) = engine.sql
+    sql, index = engine.sql
     assert "INSERT INTO entities" in sql and "'Gold', 'Gold', 'resource'" in sql
     assert "ON CONFLICT (symbol) DO NOTHING" in sql
+    assert index == ("CREATE INDEX IF NOT EXISTS market_entities_entity "
+                     "ON market_entities (entity_symbol, source, market_id)")
 
 
 def test_markets_to_enrich_covers_new_pending_old_version_and_retryable_failures():
