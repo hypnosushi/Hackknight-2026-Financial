@@ -31,7 +31,11 @@ Not built yet: highlight builder (F8), API (F9) and demo commands (F11).
 - **Sync calls:** `llm.complete`, `extract.extract` and Jev are synchronous. Call them through `asyncio.to_thread`.
 - **Saving:** every save function flushes and leaves the commit to the caller. The exception is `build_links`, which commits as it goes so pollers see progress: give it its own session.
 - **Reading links (F5):** call `links.read_links(session, symbol, cfg.graph_max_linked)`, never a plain `entity_symbol = symbol` query. Reverse-lookup links are stored from the other company's side and `read_links` flips them.
-- **Run status (F5):** a timeout ends `done` with what was saved. A run that saved nothing and hit any failure ends `error`, so an outage is not cached for the TTL. A `running` row older than 10 minutes counts as crashed.
+- **Run status (F5):** a timeout ends `done` with what was saved. A run that saved no filing link and hit any failure (SEC, search or the model) ends `error`, even if industry peers were saved, so an outage is not cached for the TTL. A `running` row older than 10 minutes counts as crashed.
+- **Which filings are read (F5):** the reverse search keeps one filing per other company and reads the 10 largest companies first. Size is the company's position in SEC's `company_tickers.json`, which SEC orders largest first (`CompanyDirectory.size_rank`). SEC's own order favours small companies that depend on the searched one.
+- **Industry peers (F5):** every run adds the 3 largest companies in SEC's list for the searched company's industry (SIC) code as `sector_peer` links (up to `GRAPH_MAX_LINKED` when there is no filing link), citing that list (`SecClient.ciks_by_sic`). Companies already linked from filings are not repeated.
+- **What counts as a relationship (F4):** the prompt excludes landlords and leases, lenders, insurers, auditors, law firms, shareholders, lawsuit opponents, ended relationships and anything hypothetical.
+- **SEC retries (F2):** 429, 500, 502, 503 and 504 are retried with backoff.
 - **Processed filings (F5):** own filings are keyed by accession number; reverse reads by `accession#SYMBOL`, so one big 10-K can serve several companies' graphs.
 
 ## Setup

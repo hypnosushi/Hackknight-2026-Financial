@@ -23,7 +23,7 @@ from company_graph.companies import Company, CompanyDirectory
 from company_graph.config import Config
 from company_graph.db import create_tables
 from company_graph.links import build_links, get_link_run, is_fresh, own_subjects, read_links, reverse_hits
-from company_graph.sec import SUBMISSIONS_URL, RateLimiter, SearchHit, SecClient, filing_url
+from company_graph.sec import BROWSE_URL, SUBMISSIONS_URL, RateLimiter, SearchHit, SecClient, filing_url
 from company_graph.trim import Chunk
 
 NOW = datetime(2026, 10, 10, 12, 0, tzinfo=timezone.utc)
@@ -104,6 +104,12 @@ REPLIES = {
 }
 
 
+def industry_feed(ciks):
+    entries = "".join(f"<entry><content type=\"text/xml\"><company-info><cik>{c:010d}</cik><sic>3711</sic>"
+                      f"</company-info></content></entry>" for c in ciks)
+    return f'<?xml version="1.0" encoding="ISO-8859-1" ?><feed xmlns="http://www.w3.org/2005/Atom">{entries}</feed>'
+
+
 class FakeModel:
     def __init__(self, replies=REPLIES, fail=False, delay=0.0):
         self.replies, self.fail, self.delay, self.calls = replies, fail, delay, []
@@ -124,8 +130,9 @@ class FakeModel:
 class Sec:
     """A MockTransport-backed SecClient factory that records every request."""
 
-    def __init__(self, docs=DOCS, efts=EFTS, subs=None, slow=(), status=None):
+    def __init__(self, docs=DOCS, efts=EFTS, subs=None, slow=(), status=None, industry=None):
         self.docs, self.efts, self.subs, self.slow, self.status = docs, efts, subs or submissions(), set(slow), status
+        self.industry = industry  # CIKs for SEC's company list by SIC code; None = that request 404s
         self.urls: list[str] = []
 
     async def handler(self, request):
@@ -137,6 +144,8 @@ class Sec:
             return httpx.Response(200, json=self.subs)
         if urlparse(url).netloc == "efts.sec.gov":
             return httpx.Response(200, json=self.efts)
+        if url.startswith(BROWSE_URL) and self.industry is not None:
+            return httpx.Response(200, text=industry_feed(self.industry))
         if url in self.slow:
             await asyncio.sleep(5)
         if url in self.docs:
@@ -407,10 +416,10 @@ def test_stops_at_the_time_budget_and_keeps_what_was_saved(engine):
 # --- errors -----------------------------------------------------------------------------
 
 def test_sec_failure_marks_error(engine):
-    result = run(engine, Sec(status=500))
+    result = run(engine, Sec(status=403))
     assert result.status == "error" and "HTTPStatusError" in result.error
     row = link_run(engine)
-    assert row.status == "error" and "500" in row.error
+    assert row.status == "error" and "403" in row.error
     assert rows(engine, EntityRelationship) == []
 
 
@@ -442,7 +451,7 @@ def test_missing_contact_email_marks_error(engine, monkeypatch):
 
 
 def test_a_run_after_an_error_is_not_skipped(engine):
-    run(engine, Sec(status=500))
+    run(engine, Sec(status=403))
     assert run(engine, Sec()).status == "done"
 
 
@@ -463,14 +472,23 @@ def replace_run(run_row, **kw):
     return GraphLinkRun(**vals)
 
 
-def test_reverse_hits_skips_own_and_duplicate_filings():
-    def hit(acc, cik, doc="a.htm"):
-        return SearchHit(acc, cik, "X", [], "10-K", date(2026, 1, 1), doc, "u", None)
+def _hit(acc, cik, doc="a.htm"):
+    return SearchHit(acc, cik, "X", [], "10-K", date(2026, 1, 1), doc, "u", None)
 
-    hits = [hit("1", TSLA_CIK), hit("2", 5), hit("2", 5, "b.htm")] + [hit(str(i), 6) for i in range(3, 20)]
+
+def test_reverse_hits_skips_own_filings_and_keeps_one_per_filer():
+    hits = [_hit("1", TSLA_CIK), _hit("2", 5), _hit("2", 5, "b.htm"), _hit("3", 5)] + \
+           [_hit(str(i), 100 + i) for i in range(4, 20)]
     out = reverse_hits(hits, Company("TSLA", "Tesla, Inc.", TSLA_CIK))
-    assert len(out) == 10 and out[0].accession_number == "2"
-    assert len({h.accession_number for h in out}) == 10
+    assert len(out) == 10 and out[0].accession_number == "2"  # search order without a size ranking
+    assert len({h.cik for h in out}) == 10
+
+
+def test_reverse_hits_prefers_the_largest_filers():
+    tesla = Company("TSLA", "Tesla, Inc.", TSLA_CIK)
+    hits = [_hit("small", 900), _hit("big", 37996), _hit("unlisted", 123), _hit("mid", 1467858)]
+    out = reverse_hits(hits, tesla, limit=3, size_rank=DIRECTORY.size_rank)
+    assert [h.accession_number for h in out] == ["big", "mid", "small"]  # F, GM, then search order
 
 
 def test_own_subjects_ranks_by_mentions_and_excludes_self():
@@ -532,3 +550,52 @@ def test_foreign_issuer_own_20f_is_read(engine):
     assert result.status == "done"
     assert TEN_K in sec.archive_urls() and OLD_TEN_K not in sec.archive_urls()  # newest annual report only
     assert ("PCRFY", "supplier") in {(l.symbol, l.type) for l in stored_links(engine)}
+
+
+# --- industry peers --------------------------------------------------------------------------
+
+def test_industry_peers_added_next_to_filing_links_largest_first(engine):
+    # Industry list in SEC's (non-size) order; the directory ranks NVDA, F, GM, ALB, PCRFY, AAPL by position.
+    sec = Sec(industry=[320193, 1467858, 37996, TSLA_CIK, 999999])
+    result = run(engine, sec, cfg=Config(graph_max_linked=12))
+    assert result.status == "done" and not result.sector_fallback
+    peers = [l for l in stored_links(engine) if l.source == "sector"]
+    # F and GM are already on the graph as competitors, TSLA is itself and 999999 is unlisted: AAPL is left.
+    assert {l.symbol for l in peers} == {"AAPL"}
+    assert all(l.evidence_url.startswith(BROWSE_URL) for l in peers)
+    assert any(u.startswith(BROWSE_URL) for u in sec.urls)
+
+
+EXTRA_PEERS = [(9000 + i, f"PEER{i}", f"Peer Motors {i} Inc") for i in range(1, 6)]  # ranked after DIRECTORY
+
+
+def _directory_with_peers():
+    rows = [(c.cik, c.symbol, c.name) for c in (DIRECTORY.get(t) for t in
+            ["TSLA", "NVDA", "F", "GM", "ALB", "PCRFY", "AAPL"])] + EXTRA_PEERS
+    return CompanyDirectory.from_sec_json({str(i): {"cik_str": cik, "ticker": t, "title": n}
+                                           for i, (cik, t, n) in enumerate(rows)})
+
+
+def test_industry_peers_capped_at_three_when_filing_links_exist(engine):
+    industry = [cik for cik, _, _ in reversed(EXTRA_PEERS)] + [320193]
+    run(engine, Sec(industry=industry), cfg=Config(graph_max_linked=20), directory=_directory_with_peers())
+    peers = [l.symbol for l in stored_links(engine) if l.source == "sector"]
+    assert sorted(peers) == ["AAPL", "PEER1", "PEER2"]  # the three largest by SEC's size order
+
+
+def test_industry_peers_fill_the_graph_when_no_filing_links(engine):
+    sec = Sec(efts={"hits": {"total": {"value": 0}, "hits": []}}, industry=[cik for cik, _, _ in EXTRA_PEERS])
+    result = run(engine, sec, model=FakeModel(replies={}), cfg=Config(graph_max_linked=4),
+                 directory=_directory_with_peers())
+    assert result.status == "done" and result.sector_fallback
+    assert {l.symbol for l in stored_links(engine)} == {"PEER1", "PEER2", "PEER3", "PEER4"}  # up to the cap
+
+
+def test_model_outage_with_industry_peers_is_still_an_error(engine):
+    # The model fails everywhere but SEC's industry list works: peers are saved and shown, yet the
+    # run is an error so the next search retries instead of caching a peers-only graph for a week.
+    sec = Sec(industry=[cik for cik, _, _ in EXTRA_PEERS])
+    result = run(engine, sec, model=FakeModel(fail=True), directory=_directory_with_peers())
+    assert result.status == "error" and "no filing links saved" in result.error
+    assert link_run(engine).status == "error"
+    assert {l.source for l in stored_links(engine)} == {"sector"}

@@ -69,10 +69,17 @@ class CompanyDirectory:
         self._by_ticker: dict[str, Company] = {}
         self._by_name: dict[str, list[Company]] = {}
         self._ordered: list[tuple[str, str, Company]] = []  # (ticker lower, normalized name, company)
+        # SEC's company_tickers.json is ordered by company size (largest first), so a company's
+        # position in it is a free size ranking: 0 = largest. Keyed by CIK (one company, many tickers).
+        self._by_cik: dict[int, Company] = {}
+        self._size_rank: dict[int, int] = {}
         for c in companies:
             if not c.symbol or c.symbol in self._by_ticker:
                 continue
             self._by_ticker[c.symbol] = c
+            if c.cik not in self._by_cik:
+                self._by_cik[c.cik] = c
+                self._size_rank[c.cik] = len(self._size_rank)
             norm = normalize_name(c.name)
             if norm:
                 self._by_name.setdefault(norm, []).append(c)
@@ -92,6 +99,14 @@ class CompanyDirectory:
 
     def get(self, symbol: str) -> Company | None:
         return self._by_ticker.get(symbol.upper().strip())
+
+    def by_cik(self, cik: int) -> Company | None:
+        """The company's first (most traded) listing for this CIK."""
+        return self._by_cik.get(int(cik))
+
+    def size_rank(self, cik: int) -> int:
+        """Position by company size in SEC's list, 0 = largest. Unlisted companies rank after all listed ones."""
+        return self._size_rank.get(int(cik), len(self._size_rank))
 
     def resolve(self, text: str) -> Company | None:
         """Exact ticker first, then a normalized name match. None when not confident."""

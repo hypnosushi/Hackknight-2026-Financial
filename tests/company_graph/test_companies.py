@@ -235,3 +235,13 @@ def test_ensure_entity_with_real_entities_model():
     row = asyncio.run(companies.ensure_entity(session, Company("TSLA", "Tesla, Inc.", 1318605)))
     assert isinstance(row, entity_mod.Entity)
     assert row.type == "company"
+
+
+def test_size_rank_follows_secs_order_and_lookup_by_cik():
+    d = CompanyDirectory.from_sec_json(SEC_FIXTURE)
+    assert d.size_rank(1318605) == 0  # TSLA is first in the fixture
+    assert d.size_rank(1652044) == 2  # GOOGL and GOOG share one CIK and one rank
+    assert d.size_rank(1018724) == 3  # AMZN comes right after it
+    assert d.size_rank(42) == len(d.__dict__["_size_rank"])  # unlisted: after every listed company
+    assert d.by_cik(1652044).symbol == "GOOGL"  # the first listing for the CIK
+    assert d.by_cik(42) is None

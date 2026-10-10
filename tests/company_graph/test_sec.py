@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from company_graph.sec import (
+    BROWSE_URL,
     RateLimiter,
     SecClient,
     SecConfigError,
@@ -280,6 +281,61 @@ def test_gives_up_after_max_retries(tmp_path):
     with pytest.raises(SecRequestError, match="503"):
         run(go())
     assert len(calls) == 3
+
+
+def test_retries_sec_server_errors(tmp_path):
+    clock = FakeClock()
+    responses = [httpx.Response(500), httpx.Response(502), httpx.Response(504), httpx.Response(200, json=SUBMISSIONS)]
+
+    def handler(request):
+        return responses.pop(0)
+
+    async def go():
+        async with make_client(handler, tmp_path, clock=clock, backoff_s=1.0) as sec:
+            return await sec.list_filings(1318605)
+
+    assert run(go()).name == "Tesla, Inc."
+    assert responses == []
+
+
+def _industry_page(ciks):
+    entries = "".join(f"<entry><content type=\"text/xml\"><company-info name=\"ARRAY(0x1)\">"
+                      f"<cik>{c:010d}</cik><sic>3711</sic></company-info></content></entry>" for c in ciks)
+    return f'<?xml version="1.0" encoding="ISO-8859-1" ?><feed xmlns="http://www.w3.org/2005/Atom">{entries}</feed>'
+
+
+def test_ciks_by_sic_pages_through_the_industry_list(tmp_path):
+    pages = {"0": list(range(1, 101)), "100": [101, 102, 5]}  # a full page, then a short one (5 repeats)
+    seen = []
+
+    def handler(request):
+        q = parse_qs(urlparse(str(request.url)).query)
+        seen.append(q)
+        return httpx.Response(200, text=_industry_page(pages[q.get("start", ["0"])[0]]))
+
+    async def go():
+        async with make_client(handler, tmp_path) as sec:
+            return await sec.ciks_by_sic("3711")
+
+    url, ciks = run(go())
+    assert ciks == list(range(1, 103))
+    assert len(seen) == 2 and seen[0]["SIC"] == ["3711"] and seen[0]["output"] == ["atom"]
+    assert url.startswith(BROWSE_URL) and "SIC=3711" in url and "start=" not in url
+
+
+def test_ciks_by_sic_stops_at_max_pages(tmp_path):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200, text=_industry_page(range(len(calls) * 1000, len(calls) * 1000 + 100)))
+
+    async def go():
+        async with make_client(handler, tmp_path) as sec:
+            return await sec.ciks_by_sic("7372", max_pages=2)
+
+    _, ciks = run(go())
+    assert len(calls) == 2 and len(ciks) == 200
 
 
 def test_other_errors_raise_without_retry(tmp_path):

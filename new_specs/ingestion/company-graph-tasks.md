@@ -240,7 +240,7 @@ The fastest way to a real (not fake-mode) page is F9 with highlights left empty;
 
 **Status:** done; the live check is an opt-in test not yet run. **File:** `company_graph/links.py`
 
-**As built:** links are stored from the filer's side, so read them with `read_links`, which flips reverse-lookup rows. Subjects in a company's own filings are found with F7's `find_companies`, so non-US counterparties named only there (such as CATL) are missed. 8-Ks are fetched and kept only if they show Item 1.01 or 2.01.
+**As built:** links are stored from the filer's side, so read them with `read_links`, which flips reverse-lookup rows. Subjects in a company's own filings are found with F7's `find_companies`, so non-US counterparties named only there (such as CATL) are missed. 8-Ks are fetched and kept only if they show Item 1.01 or 2.01. After the first live runs: reverse hits keep one filing per company and read the largest companies first; the 3 largest same-industry companies are always added as `sector_peer` (from SEC's company list by SIC code); annual reports include 20-F and 40-F; SEC 5xx errors are retried.
 
 **Build:** `build_links(symbol)` that
 1. Marks `graph_link_runs` as `running`. Skips the run when the last one is `done` and newer than `GRAPH_LINK_TTL_DAYS`.
