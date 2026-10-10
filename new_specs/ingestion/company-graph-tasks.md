@@ -67,7 +67,7 @@ Owners are taken from git history.
 
 | Decision | Blocks | Status |
 | --- | --- | --- |
-| Who creates the FastAPI app, and at what path? | F9 | Resolved: ShabirZ added it. The app is `backend/main.py` (run with `uv run uvicorn backend.main:app --reload`), with one router per area in `backend/api/` (see `new_specs/fastapi.md`). It has no CORS yet. |
+| Who creates the FastAPI app, and at what path? | F9 | Resolved: ShabirZ added it. The app is `backend/main.py` (run with `uv run uvicorn backend.main:app --reload`), with one router per area in `backend/api/` (see `new_specs/fastapi.md`). CORS allows the Vite dev server. |
 | Is anyone else adding the `entities` model? | F0 | Resolved: F0 added it. |
 | May `entity_relationships` gain `summary` and `evidence_url`? | F0 | Resolved: added, and `db-design.md` updated. |
 | Which LLM provider? Who builds Jev? | F4, F6, F8 | Resolved: OpenRouter through `backend/llm`; Jev is `backend/classification`. |
@@ -309,8 +309,7 @@ Do not compare odds yourself. `market_prices` keeps only 30 minutes of rows, and
 - `GET /graph/{ticker}`: return stored links at once. When links are missing or stale, start `build_links` as an in-process `asyncio` task and return `status: "running"`. When links are ready, run `build_highlights` and return `status: "done"`.
 - Return `schemas.GraphResponse`, so the shape always matches the page.
 - With `GRAPH_FAKE=1`, serve `schemas.load_fixture(ticker)` (an empty `done` graph for unknown tickers) and call nothing else.
-- Allow the frontend's origin (CORS): the page runs on port 5173 and the API on 8000.
-- Mounting needs two small edits to ShabirZ's `backend/main.py`, agreed with him first: one `app.include_router(...)` line, and CORS middleware allowing the frontend's origin (`http://localhost:5173`), which the app does not have yet. `fastapi` is already a dependency.
+- Mount it with one `app.include_router(...)` line in `backend/main.py` (ShabirZ's file). CORS for the frontend (`http://localhost:5173`) is already set there. `fastapi` is already a dependency.
 
 **Done when:** tests using FastAPI's test client, with the router mounted on a throwaway app, show that a first request returns `running`, a later one returns `done` with links, and fake mode works with no database and no network.
 

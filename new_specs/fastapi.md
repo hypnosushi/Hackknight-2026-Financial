@@ -121,8 +121,9 @@ models from each ingestion module — no new schema invented here.
 
 ## Open Questions
 
-- CORS: `frontend/` (Vite dev server) will need its origin allowed once
-  it actually calls this API — not configured here, fine to fix later.
+- ~~CORS~~ Resolved: `backend/main.py` allows the Vite dev server
+  (`http://localhost:5173` and `http://127.0.0.1:5173`) for GET requests,
+  in `FRONTEND_ORIGINS`. Add a deployed frontend's origin there when one exists.
 - Where do market-history (Kalshi/Polymarket, per [[ingestion/alpaca]]'s
   deferred Resolved note) and alert endpoints eventually live — new
   routers under `backend/api/`, following the same pattern, presumably,
