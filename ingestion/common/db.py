@@ -16,6 +16,7 @@ MAX_QUEUE = 100_000  # per table
 UPSERT_CHUNK = 1000  # keeps each statement under Postgres' bind-parameter limit
 RETENTION = "30 minutes"  # live rows; "normal" comes from market_baselines (python -m baselines)
 HOURLY_RETENTION = "14 days"
+CLOSED_RETENTION = HOURLY_RETENTION  # closed markets outlive their market_hourly rows, then go
 DEMO_SERIES = "KXDEMO"  # fake markets from alert_detector.demo; workers never close them
 PRICE_COLUMNS = ["source", "market_id", "timestamp", "price_or_odds", "yes_bid", "yes_ask",
                  "yes_bid_size", "yes_ask_size", "volume", "open_interest", "snapshot"]
@@ -112,13 +113,33 @@ ON CONFLICT (source, market_id, hour) DO UPDATE SET quote_rows = h.quote_rows + 
 """)
 
 
+# Markets closed longer than CLOSED_RETENTION, with their baselines. Markets an alert
+# points at are kept, and so is any market still holding live rows (the foreign keys).
+_DELETE_CLOSED_MARKETS = text(f"""
+WITH gone AS (
+  DELETE FROM markets m
+  WHERE m.status = 'closed' AND m.updated_at < now() - interval '{CLOSED_RETENTION}'
+    AND m.series_id IS DISTINCT FROM '{DEMO_SERIES}'
+    AND NOT EXISTS (SELECT 1 FROM alerts a WHERE a.source = m.source AND a.market_id = m.market_id)
+    AND NOT EXISTS (SELECT 1 FROM market_prices p WHERE p.source = m.source AND p.market_id = m.market_id)
+    AND NOT EXISTS (SELECT 1 FROM market_trades t WHERE t.source = m.source AND t.market_id = m.market_id)
+  RETURNING source, market_id
+)
+DELETE FROM market_baselines b USING gone g
+WHERE b.source = g.source AND b.market_id = g.market_id
+""")
+
+
 async def delete_old_rows(engine: AsyncEngine) -> None:
-    """Retention: roll expired live rows up into market_hourly, then drop old hourly rows."""
+    """Retention: roll expired live rows up into market_hourly, drop old hourly rows and long-closed markets."""
     async with engine.begin() as conn:
         await conn.execute(_ROLL_UP_TRADES)
         await conn.execute(_ROLL_UP_PRICES)
         await conn.execute(delete(MarketHourly).where(
             MarketHourly.hour < text(f"now() - interval '{HOURLY_RETENTION}'")))
+    # Own transaction: a failure here must not undo the roll-up above.
+    async with engine.begin() as conn:
+        await conn.execute(_DELETE_CLOSED_MARKETS)
 
 
 class _Queue:
