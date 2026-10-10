@@ -116,6 +116,7 @@ def main() -> None:
     if out_path is None:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         out_path = DEFAULT_OUTPUT_DIR / f"news_{args.query}_{timestamp}.json"
+    out_path = out_path.resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(
         json.dumps(
@@ -127,7 +128,7 @@ def main() -> None:
             indent=2,
         )
     )
-    print(f"Saved {len(items)} articles to {out_path.relative_to(REPO_ROOT)}")
+    print(f"Saved {len(items)} articles to {out_path.relative_to(REPO_ROOT) if out_path.is_relative_to(REPO_ROOT) else out_path}")
 
 
 if __name__ == "__main__":
