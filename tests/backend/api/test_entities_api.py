@@ -113,3 +113,21 @@ def test_top_markets_ranks_company_then_links_then_tags(top_client):
 def test_top_markets_needs_a_company(top_client):
     assert top_client.get("/entities/Gold/top-markets").status_code == 404
     assert top_client.get("/entities/NOPE/top-markets").status_code == 404
+
+
+def test_rerank_scores_the_candidates_and_returns_the_best(top_client, monkeypatch):
+    def rerank(company, related, markets):
+        top_client.calls["rerank"] = (company, related, len(markets))
+        return [(markets[0], 0.912)]
+
+    monkeypatch.setattr(entities, "rerank", rerank)
+    body = top_client.get("/entities/NVDA/top-markets",
+                          params=[("tags", "microchips"), ("rerank", "true"), ("candidates", "40")]).json()
+    assert top_client.calls["limit"] == 40  # candidates, not limit, are fetched
+    assert top_client.calls["rerank"] == ("NVIDIA Corporation", ["Semiconductors", "TSM"], 1)
+    assert body["markets"][0]["relevance"] == 0.912
+
+
+def test_without_rerank_relevance_is_empty(top_client):
+    body = top_client.get("/entities/NVDA/top-markets").json()
+    assert body["markets"][0]["relevance"] is None

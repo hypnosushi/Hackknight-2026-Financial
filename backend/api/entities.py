@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from backend.classification import JevError
 from backend.enrichment import db
+from backend.enrichment.rerank import rerank
 from backend.enrichment.tag_match import match_tags
 from backend.entities import load_entity_map
 from backend.ingestion.common.db import make_engine
@@ -106,6 +107,7 @@ class TopMarketOut(BaseModel):
     url: str | None
     tier: int  # 1 = tagged with the company, 2 = a linked company, 3 = one of the tags
     matched: list[str]  # the entities that made it match
+    relevance: float | None = None  # Jev's probability that it matters to the company (rerank only)
 
 
 class TopMarketsOut(BaseModel):
@@ -117,9 +119,12 @@ class TopMarketsOut(BaseModel):
 
 @router.get("/{company_id}/top-markets", response_model=TopMarketsOut)
 async def top_markets(company_id: str, tags: list[str] = Query([], max_length=20),
-                      limit: int = Query(3, ge=1, le=10), engine: AsyncEngine = Depends(get_engine)):
+                      limit: int = Query(3, ge=1, le=10), rerank_: bool = Query(False, alias="rerank"),
+                      candidates: int = Query(50, ge=1, le=200), engine: AsyncEngine = Depends(get_engine)):
     """The company's top markets: its own first, then linked companies', then the tags'.
     Free-text tags ("ev", "microchips") are matched to map entities, by one Jev call if needed.
+    With `rerank=true`, the tag query's top `candidates` events are scored by Jev for how much
+    they matter to the company, and only those scoring 0.5 or more are returned, best first.
     """
     company = await db.get_entity(engine, company_id)
     if company is None or company["type"] != "company":
@@ -142,7 +147,15 @@ async def top_markets(company_id: str, tags: list[str] = Query([], max_length=20
     by_symbol = {e.symbol: e for e in _MAP.entities}
     tag_out += [TagOut(input=None, id=s, name=by_symbol[s].name if s in by_symbol else s, category="company",
                        source="graph") for s in links]
-    markets = await db.top_markets(engine, tiers, limit)
+    markets = await db.top_markets(engine, tiers, candidates if rerank_ else limit)
+    if rerank_:
+        related = [t.name for t in tag_out]
+        try:
+            scored = await asyncio.to_thread(rerank, company["name"], related, markets)
+        except JevError as exc:
+            raise HTTPException(502, f"Reranking failed: {exc}") from exc
+        markets = [{**m, "relevance": round(score, 3)} for m, score in scored[:limit]]
+    fields = TopMarketOut.model_fields
     return TopMarketsOut(company=_entity(company), tags=tag_out,
                          unmatched_tags=[t for t, e in matched.items() if e is None],
-                         markets=[TopMarketOut(**{k: m[k] for k in TopMarketOut.model_fields}) for m in markets])
+                         markets=[TopMarketOut(**{k: m[k] for k in fields if k in m}) for m in markets])

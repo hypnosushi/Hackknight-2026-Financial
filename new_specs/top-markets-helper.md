@@ -110,6 +110,16 @@ ranks by `close_time ASC` alone (soonest-resolving first). Open interest is a be
 "money at stake" measure, but Polymarket has no equivalent at discovery, so 24h volume is the
 one measure available across sources.
 
+### Optional Jev rerank (`rerank=true`)
+
+The tag query's top `candidates` events (default 50) go to Jev in one call per 50: state is
+the company and what it is tied to; one yes/no question per event, "would this market's
+outcome matter to an investor in the company?". Events scoring 0.5 or more are returned,
+most relevant first, with `relevance` set. Measured live on 5 companies (100 tagged events):
+about 1 s per search either way and a fraction of a cent more per search; it moved
+Fed-decision markets to the top for JPM over a Freddie Mac IPO, and natural gas and crude
+markets for XOM over an ExxonMobil credit-card-spend market (relevance below 0.5).
+
 ### Query shape
 
 One SQL query: the company's tag list (with tier per tag) joined to `market_entities`, then
