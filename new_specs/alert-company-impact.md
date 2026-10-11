@@ -1,6 +1,6 @@
 # Alert → Company Impact
 
-**Status:** Draft
+**Status:** Built (backend, tiers 1-2): `backend/alert_impact/`, `backend/api/alerts.py`
 **Owner:** Unassigned
 
 ## Problem / Why
@@ -124,8 +124,10 @@ New table **`alert_impacts`** (one row per alert and company):
 Plus a status row per alert for retries, either in `alert_impacts` itself (a row with a null
 company) or a small `alert_impact_runs (alert_id, status, error, attempts)`.
 
-Also writes `graph_events` (one per company and market URL, exactly like F7), so F8 and the
-workspace graph need no change.
+Also writes `graph_events` for tier-1 companies (one per company and market URL, exactly like
+F7), so F8 and the workspace graph need no change. Tier-2 companies get no `graph_events` row:
+F8 already spreads a company's events to the companies it links to, so writing them too would
+double that.
 
 API (draft, in `backend/api/alerts.py`):
 
@@ -177,8 +179,15 @@ API (draft, in `backend/api/alerts.py`):
   untagged market, within 5 s, and the event is then tagged for search too.
 - A Crude Oil alert lists companies Jev tagged directly (tier 1) above their graph-linked
   companies (tier 2), each with `matched` set.
-- Every affected company also has a `graph_events` row with the alert's id, and shows as
-  highlighted on the workspace graph without frontend changes.
+- Every tier-1 company also has a `graph_events` row with the alert's id, so it feeds the
+  workspace graph's highlights without frontend changes.
+
+Verified live (2026-10-10, shared DB): a test alert on "NVIDIA B200 · Average hourly price in
+July 2027", inserted with the detector's own `insert_alert` (so `pg_notify` fired), was
+processed in 0.6 s: NVDA tier 1 with a `graph_events` row; COHR, CRWV, FN, GOOGL, INTC, IREN,
+MSFT, MU, NBIS tier 2; served by `/alerts/recent`, `/entities/NVDA/alerts` and
+`/entities/MU/alerts`. The test rows were deleted afterwards. Tier 3 (F14 keywords via
+`company_entity_tags`) is not built yet.
 - An alert written while the worker was down is processed on restart (within the lookback).
 - A Jev or database failure for one alert is recorded and retried, and the next alert is still
   processed.
