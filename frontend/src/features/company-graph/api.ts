@@ -3,6 +3,7 @@ import type {
   CompanyGraphResponse,
   CompanyRef,
   CompanySearchResponse,
+  PairNewsResponse,
 } from "../../types/graph";
 import aapl from "./fixtures/AAPL.json";
 import nvda from "./fixtures/NVDA.json";
@@ -82,6 +83,28 @@ export function fetchGraph(
 ): Promise<CompanyGraphResponse> {
   if (GRAPH_FAKE) return fakeGraph(ticker, attempt);
   return get<CompanyGraphResponse>(`/graph/${encodeURIComponent(ticker)}`);
+}
+
+/**
+ * GET /graph/{ticker}/news/{other}: recent news and X posts about the two
+ * companies together. A new pair takes a few seconds; repeats are cached.
+ */
+export async function fetchPairNews(
+  ticker: string,
+  other: string,
+): Promise<PairNewsResponse> {
+  if (GRAPH_FAKE) {
+    await delay(250);
+    return {
+      company: { symbol: ticker, name: ticker },
+      other: { symbol: other, name: other },
+      items: [],
+      failed: [],
+    };
+  }
+  return get<PairNewsResponse>(
+    `/graph/${encodeURIComponent(ticker)}/news/${encodeURIComponent(other)}`,
+  );
 }
 
 /** GET /companies/search?q= (up to 10 matches). */

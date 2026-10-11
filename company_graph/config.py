@@ -27,6 +27,8 @@ class Config:
     graph_social_daily_budget: int = 20  # most X searches this feature may make per day (each reads up to 100 posts)
     graph_social_min_likes: int = 5      # posts with fewer likes are not sent to Jev (most are noise)
     x_bearer_token: str = ""
+    graph_pair_ttl_hours: float = 6      # how long news about one pair of companies is reused
+    graph_pair_daily_budget: int = 30    # most pair searches per source (NewsAPI, X) per day
     database_url: str = ""
 
     @property
@@ -48,6 +50,10 @@ class Config:
     @property
     def social_ttl_s(self) -> float:
         return self.graph_social_ttl_hours * 3600
+
+    @property
+    def pair_ttl_s(self) -> float:
+        return self.graph_pair_ttl_hours * 3600
 
 
 def load() -> Config:

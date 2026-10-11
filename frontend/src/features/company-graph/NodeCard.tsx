@@ -1,6 +1,7 @@
 import type { CompanyGraphResponse } from "../../types/graph";
 import { highlightsFor } from "./highlights";
 import { DIRECTION_COLOR, DIRECTION_LABEL, EVENT_LABEL, EXPOSED_LABEL, RELATIONSHIP_LABEL } from "./labels";
+import PairNews from "./PairNews";
 
 interface Props {
   data: CompanyGraphResponse;
@@ -87,6 +88,10 @@ export default function NodeCard({ data, symbol, onClose }: Props) {
         </div>
       ) : (
         !isCenter && <p className="mt-4 text-sm text-slate-500">No recent events for this company.</p>
+      )}
+
+      {!isCenter && node && (
+        <PairNews ticker={data.company.symbol} tickerName={data.company.name} other={symbol} otherName={name} />
       )}
     </section>
   );

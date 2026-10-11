@@ -61,6 +61,23 @@ class HighlightOut(_Strict):
     price_change_pct: float | None = None
 
 
+class PairNewsItemOut(_Strict):
+    source: Literal["news", "x"]
+    title: str
+    url: str
+    published_at: str  # ISO 8601
+    by: str | None = None  # the outlet for news, the @handle for X
+
+
+class PairNewsResponse(_Strict):
+    """GET /graph/{ticker}/news/{other}: recent news and X posts about the two companies together."""
+
+    company: CompanyOut
+    other: CompanyOut
+    items: list[PairNewsItemOut]
+    failed: list[str]  # sources that could not be searched this time: "news", "x"
+
+
 class GraphResponse(_Strict):
     company: CompanyOut
     status: RunStatus

@@ -1,7 +1,8 @@
 """F9. Graph API: the two endpoints the Company Graph page polls.
 
-    GET /graph/{ticker}        -> schemas.GraphResponse
-    GET /companies/search?q=   -> up to 10 {symbol, name}
+    GET /graph/{ticker}                -> schemas.GraphResponse
+    GET /graph/{ticker}/news/{other}   -> schemas.PairNewsResponse (F13, pair_news)
+    GET /companies/search?q=           -> up to 10 {symbol, name}
 
 Mounted in backend/main.py with `app.include_router(company_graph.api.router)`.
 
@@ -29,7 +30,12 @@ GRAPH_EVENT_WINDOW_DAYS). Once the links are done, `refresh_highlights` starts F
     so the page keeps polling; then "done" with the new highlights.
 A failure in highlight building is logged and never turns a good links graph into an error.
 
-With GRAPH_FAKE=1 both endpoints serve the fixtures and touch no database and no network.
+GET /graph/{ticker}/news/{other} answers only for a company `other` that is linked to `ticker` in the
+stored graph (404 otherwise), so it cannot be used to spend NewsAPI and X requests on any pair. It
+waits for pair_news (cached per pair for GRAPH_PAIR_TTL_HOURS; a new pair takes a few seconds).
+
+With GRAPH_FAKE=1 every endpoint serves the fixtures (pair news: no items) and touches no database
+and no network.
 """
 
 from __future__ import annotations
@@ -49,6 +55,7 @@ from backend.models.graph_highlight import GraphHighlight
 from company_graph import config as graph_config
 from company_graph import highlights as graph_highlights
 from company_graph import links as graph_links
+from company_graph import pair_news as graph_pair_news
 from company_graph.companies import Company, CompanyDirectory, get_directory
 from company_graph.schemas import (
     DIRECTIONS,
@@ -58,6 +65,8 @@ from company_graph.schemas import (
     HighlightOut,
     LinkOut,
     NodeOut,
+    PairNewsItemOut,
+    PairNewsResponse,
     fixture_tickers,
     load_fixture,
 )
@@ -164,6 +173,11 @@ async def get_company_directory(cfg: graph_config.Config = Depends(get_config)) 
 def get_link_builder() -> Callable:
     """The link run started for a company (links.build_links)."""
     return graph_links.build_links
+
+
+def get_pair_news() -> Callable:
+    """The search behind GET /graph/{ticker}/news/{other} (pair_news.pair_news)."""
+    return graph_pair_news.pair_news
 
 
 def get_highlight_builder() -> Callable:
@@ -397,6 +411,48 @@ async def get_graph(
 
     return GraphResponse(company=CompanyOut(symbol=company.symbol, name=company.name), status=status,
                          nodes=nodes, links=out_links, highlights=highlights)
+
+
+@router.get("/graph/{ticker}/news/{other}", response_model=PairNewsResponse)
+async def get_pair_news_route(
+    ticker: str,
+    other: str,
+    cfg: graph_config.Config = Depends(get_config),
+    db: GraphDb | None = Depends(get_db),
+    directory: CompanyDirectory | None = Depends(get_company_directory),
+    search: Callable = Depends(get_pair_news),
+) -> PairNewsResponse:
+    raw = ticker.strip().lstrip("$")
+    other_raw = other.strip().lstrip("$")
+    if cfg.fake:
+        a, b = raw.upper(), other_raw.upper()
+        return PairNewsResponse(company=CompanyOut(symbol=a, name=a), other=CompanyOut(symbol=b, name=b),
+                                items=[], failed=[])
+
+    company = directory.resolve(raw) or directory.get(raw.upper())
+    if company is None:
+        raise HTTPException(status_code=404, detail=f"Unknown ticker {raw.upper()!r}: not in SEC's list of listed companies")
+    try:
+        async with db.session() as session:
+            stored = await graph_links.read_links(session, company.symbol, cfg.graph_max_linked)
+    except (SQLAlchemyError, OSError) as exc:
+        log.warning("pair news link read for %s failed: %s", company.symbol, exc)
+        raise HTTPException(status_code=503, detail="The team database is unavailable") from exc
+
+    # Non-US companies are stored under their name, so match the symbol as given as well as in capitals.
+    link = next((l for l in stored if l.symbol in (other_raw, other_raw.upper())), None)
+    if link is None:
+        raise HTTPException(status_code=404, detail=f"{other_raw} is not linked to {company.symbol}")
+    other_company = directory.get(link.symbol) or link.symbol
+
+    result = await search(company, other_company, cfg=cfg)
+    return PairNewsResponse(
+        company=CompanyOut(symbol=company.symbol, name=company.name),
+        other=CompanyOut(symbol=link.symbol, name=link.name or link.symbol),
+        items=[PairNewsItemOut(source=i.source, title=i.title, url=i.url, published_at=_iso(i.published_at), by=i.by)
+               for i in result.items],
+        failed=result.failed,
+    )
 
 
 @router.get("/companies/search", response_model=list[CompanyOut])

@@ -27,6 +27,7 @@ This feature replaces the deleted `new_specs/company-network.md` and answers its
 | F10 Graph page | Done, works against the real API |
 | F11 Demo tools | Not started, unblocked |
 | F12 X posts as events | Done, verified live (`company_graph/social_events.py`) |
+| F13 News about a linked pair | Done, verified live (`company_graph/pair_news.py`, `GET /graph/{ticker}/news/{other}`, the page's company panel) |
 
 ## Live results (2026-10-10)
 

@@ -61,3 +61,22 @@ export interface CompanyGraphResponse {
 }
 
 export type CompanySearchResponse = CompanyRef[];
+
+/** One news article or X post about two linked companies together. */
+export interface PairNewsItem {
+  source: "news" | "x";
+  title: string;
+  url: string;
+  published_at: string;
+  /** The outlet for news, the @handle for X. */
+  by: string | null;
+}
+
+/** GET /graph/{ticker}/news/{other}. */
+export interface PairNewsResponse {
+  company: CompanyRef;
+  other: CompanyRef;
+  items: PairNewsItem[];
+  /** Sources that could not be searched this time: "news", "x". */
+  failed: string[];
+}
