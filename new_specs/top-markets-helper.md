@@ -68,12 +68,13 @@ predefined map, so this is one ranked query over those tags, not a new pipeline.
    company graph's `read_links`, which flips reverse-lookup edges), filing-sourced
    (`source = 'filing'`) only. `sector_peer` edges are left out: they are a weak SIC-code
    fallback, and the sector itself is covered by tag 3.
-3. **Resources, countries and sectors**: nothing stores these per company today. Proposed:
-   a hand-written `company_tags` section in `backend/entities/data/entity_map.json`, mapping
-   each of the 50 companies to a few map entities (e.g. `XOM: ["Crude Oil", "Natural Gas",
-   "Oil and Gas"]`, `NVDA: ["Semiconductors", "Taiwan", "Artificial Intelligence"]`).
-   It is code-reviewed like the rest of the map, validated by `load_entity_map` (every tag
-   must be a map entity), and covered by `map_version`.
+3. **Resources, countries and sectors**: from company graph F14 (`company_graph/tags.py`).
+   F14 stores up to 5 free-text keywords on each `entity_relationships` row ("oil", "memory",
+   "strait of hormuz"), and `get_company_tags(session, symbol)` returns every keyword on any
+   edge naming the company. Those keywords are free text, so they go through `match_tags`
+   (exact, else one Jev call) to become map entities, the only thing markets are tagged with.
+   The result is cached in `company_entity_tags` (below) so neither a search nor an alert pays
+   for that Jev call. This replaces the hand-written `company_tags` list proposed earlier.
 
 Callers may also pass tags (`tags=`), as free text: "ev", "electric vehicle", "microchips".
 `backend/enrichment/tag_match.py` turns each into a map entity: exact name, ticker or alias
@@ -154,7 +155,21 @@ Endpoint, mounted with the entity routes in `backend/api/entities.py`:
 ```
 
 `matched` and `tier` let the UI say why a market was picked, which the frontend design asks
-for. Schema changes: the `volume_24h` column (proposed) and `company_tags` in the seed file.
+for. Schema changes: the `volume_24h` column (proposed) and the `company_entity_tags` cache.
+
+**`company_entity_tags`** (new, small cache of F14 tags resolved to map entities):
+
+| column | type | notes |
+|---|---|---|
+| `company_symbol` | `TEXT` (PK part) | The company (`entities.symbol`) |
+| `entity_symbol` | `TEXT` (PK part) | A map entity its F14 keywords resolve to |
+| `keywords` | `TEXT[]` | The F14 keywords that resolved to it, for "why" text |
+| `resolved_at` | `TIMESTAMPTZ` | |
+
+Filled by a one-shot step after `python -m company_graph.tags` (same pattern as F14):
+`python -m backend.enrichment.company_tags` resolves every company whose F14 keywords
+changed since `resolved_at`. Indexed both ways: company -> entities (top markets) and
+entity -> companies (alert impact).
 
 ## Dependencies
 
@@ -169,8 +184,8 @@ for. Schema changes: the `volume_24h` column (proposed) and `company_tags` in th
 - **Tag matching consistency**: Jev sees all of a request's tags together, which can shift a
   pick (seen live: "microchips" matched Semiconductors alone, Computer Memory Chips next to
   "memory chips"). One call per tag would be steadier at a few more calls.
-- **Companies outside the map**: graph companies outside the 50 have no `company_tags`, and
-  markets are only enriched with map entities. Return their graph-based matches only, or
+- **Companies outside the map**: any graph company with F14 tags gets tier-3 entities, but
+  only the 50 map companies can be tagged on markets directly (tier 1). Return their graph-based matches only, or
   extend the map?
 - **One market per event**: return the event's most active market, or an event-level card
   (question + all outcomes)?
@@ -186,3 +201,4 @@ for. Schema changes: the `volume_24h` column (proposed) and `company_tags` in th
 - A company with 2 matching events returns exactly 2; with none, an empty list and HTTP 200.
 - Every result is active (`status = 'active'`) and carries `matched` and `tier`.
 - One SQL query per request, after the tag list is built.
+
