@@ -230,3 +230,6 @@ __marimo__/
 
 # Claude Code agent worktrees
 .claude/worktrees/
+
+# macOS Finder metadata
+.DS_Store
