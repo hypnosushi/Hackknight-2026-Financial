@@ -5,7 +5,7 @@ import { useWorkspace } from "../features/workspace/useWorkspace";
 import {
   WorkspaceTransition,
   OverlayChart,
-  AddEvidenceButtons,
+  EvidenceSidebar,
   EvidenceDrawer,
   QueryCard,
 } from "../features/workspace/market-view";
@@ -41,19 +41,21 @@ function GraphColumn() {
 
 function MarketViewColumn() {
   return (
-    // pl-20 (not p-6 on all sides), same reasoning as GraphAndPickerColumn's
-    // picker panel: the projects rail overlays this pane too, at a higher
-    // z-index, so content needs clearance from the true left edge.
-    <div className="flex h-full w-full flex-col gap-5 overflow-y-auto py-6 pl-20 pr-6">
-      <div className="flex items-center justify-between gap-4">
-        <h2 className="text-lg font-semibold" style={{ color: "var(--text-primary)" }}>
-          Market view
-        </h2>
-        <SaveProjectButton />
+    <div className="flex h-full w-full">
+      {/* pl-20 (not p-6 on all sides): the projects rail overlays this pane at
+          a higher z-index, so content needs clearance from the true left edge.
+          No title row, so the chart gets the height; the save button sits
+          right-aligned above it. */}
+      <div className="flex min-w-0 flex-1 flex-col gap-5 overflow-y-auto py-6 pl-20 pr-6">
+        <div className="flex justify-end">
+          <SaveProjectButton />
+        </div>
+        <OverlayChart />
+        <QueryCard />
       </div>
-      <OverlayChart />
-      <AddEvidenceButtons />
-      <QueryCard />
+      <aside className="h-full w-80 shrink-0">
+        <EvidenceSidebar />
+      </aside>
     </div>
   );
 }

@@ -1,11 +1,13 @@
 import { useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { fetchNormalizedSeries } from "../../../lib/api/series";
+import { fetchSeriesBundle, type SeriesBundle } from "../../../lib/api/series";
+import { alignLevels, computeRelationship } from "../../../lib/chart/relationship";
 import type { NormalizedSeries } from "../../../types/market";
 import { ThemeContext } from "../../theme/ThemeProvider";
 import { useWorkspace } from "../useWorkspace";
+import { OddsPanel } from "./OddsPanel";
+import { PricePanel } from "./PricePanel";
 import { RangeSelector } from "./RangeSelector";
-import { TimelineAnnotations } from "./TimelineAnnotations";
+import { RelationshipPanel } from "./RelationshipPanel";
 
 /**
  * Categorical "series identity" palette — intentionally separate from both
@@ -27,33 +29,6 @@ const FALLBACK_SERIES_COLOR = { light: "#8a8f98", dark: "#a7acb6" };
 function seriesColor(marketIndex: number, mode: "light" | "dark"): string {
   const step = SERIES_PALETTE[marketIndex] ?? FALLBACK_SERIES_COLOR;
   return mode === "dark" ? step.dark : step.light;
-}
-
-/** One row per grid timestamp: `t`, then `<seriesId>` (normalized) and `<seriesId>__raw` per series. */
-interface ChartRow {
-  t: number;
-  [seriesKey: string]: number | undefined;
-}
-
-function formatRaw(series: NormalizedSeries, rawValue: number): string {
-  if (series.unit === "usd") {
-    return `$${rawValue.toFixed(2)}`;
-  }
-  return `${rawValue.toFixed(1)}%`;
-}
-
-/** Stocks move in %, odds in percentage points — label each honestly. */
-function formatChange(series: NormalizedSeries, value: number): string {
-  const sign = value >= 0 ? "+" : "";
-  return `${sign}${value.toFixed(1)}${series.unit === "usd" ? "%" : " pts"}`;
-}
-
-function formatTick(t: number): string {
-  return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
-function formatTooltipDate(t: number): string {
-  return new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 /** Skeleton shaped like the eventual chart area — axes + a faint wandering line — not a spinner. */
@@ -117,56 +92,6 @@ function ChartLegend({ entries }: { entries: LegendEntry[] }) {
   );
 }
 
-interface OverlayTooltipEntry {
-  dataKey?: string | number;
-  color?: string;
-  value?: number;
-  payload: ChartRow;
-}
-
-interface OverlayTooltipProps {
-  active?: boolean;
-  payload?: OverlayTooltipEntry[];
-  label?: number | string;
-  seriesById: Map<string, NormalizedSeries>;
-}
-
-function OverlayTooltip({ active, payload, label, seriesById }: OverlayTooltipProps) {
-  if (!active || !payload || payload.length === 0) return null;
-  const t = Number(label);
-
-  return (
-    <div
-      className="rounded-[var(--radius-control)] px-3 py-2 text-sm shadow-lg"
-      style={{ background: "var(--surface-elevated)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
-    >
-      <div className="mb-1 font-medium" style={{ color: "var(--text-tertiary)" }}>
-        {formatTooltipDate(t)}
-      </div>
-      <dl className="flex flex-col gap-1">
-        {payload.map((entry) => {
-          const series = seriesById.get(String(entry.dataKey));
-          if (!series) return null;
-          const row = entry.payload as ChartRow;
-          const raw = row[`${series.id}__raw`];
-          return (
-            <div key={series.id} className="flex items-center justify-between gap-4">
-              <dt className="flex items-center gap-2">
-                <span aria-hidden className="inline-block h-2 w-2 rounded-full" style={{ background: entry.color }} />
-                {series.label}
-              </dt>
-              <dd className="font-mono text-xs" style={{ color: "var(--text-secondary)" }}>
-                {typeof entry.value === "number" ? formatChange(series, entry.value) : "—"}
-                {typeof raw === "number" ? ` (${formatRaw(series, raw)})` : ""}
-              </dd>
-            </div>
-          );
-        })}
-      </dl>
-    </div>
-  );
-}
-
 export interface OverlayChartProps {
   /** Overridden mostly for tests/storybook-style use — defaults to the workspace's active ticker. */
   ticker?: string;
@@ -175,9 +100,9 @@ export interface OverlayChartProps {
   /**
    * Extension point for layering on timeline annotation lines / click targets
    * (Stage 7-8, built elsewhere) without this chart becoming a sealed box.
-   * Children are rendered as additional children of recharts' <LineChart>,
+   * Children are rendered as additional children of the price panel's recharts <LineChart>,
    * so a caller can drop in <ReferenceLine>/<ReferenceDot> etc. positioned
-   * against this chart's own x/y scale (x is epoch ms). Evidence markers
+   * against the price panel's x/y scale (x is epoch ms). Evidence markers
    * are already rendered by the chart itself.
    */
   children?: ReactNode;
@@ -185,10 +110,9 @@ export interface OverlayChartProps {
 }
 
 /**
- * Stage 6 core — normalized multi-series overlay chart. Single shared y-axis
- * (change from the start of the visible window: stock %, market odds in points); the stock line stays the
- * neutral "ground truth" color, each market gets a stable hue from the
- * categorical series palette above. Real units surface in the tooltip only.
+ * Stacked panels sharing one time axis: price (USD), odds (real 0-100%), and
+ * a rolling correlation between SPY-adjusted stock returns and odds changes.
+ * Components are thin; all math lives in lib/chart/relationship.ts.
  */
 export function OverlayChart({ ticker, marketIds, children, className }: OverlayChartProps) {
   const { state } = useWorkspace();
@@ -199,18 +123,19 @@ export function OverlayChart({ ticker, marketIds, children, className }: Overlay
   const effectiveMarketIds = marketIds ?? state.selectedMarketIds;
   const range = state.range;
 
-  const [series, setSeries] = useState<NormalizedSeries[] | null>(null);
+  const [bundle, setBundle] = useState<SeriesBundle | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "error" | "done">("idle");
+  const [relationshipPick, setRelationshipPick] = useState<string | null>(null);
 
   useEffect(() => {
     if (!effectiveTicker) {
-      setSeries(null);
+      setBundle(null);
       setStatus("idle");
       return;
     }
     let cancelled = false;
     setStatus("loading");
-    fetchNormalizedSeries(
+    fetchSeriesBundle(
       effectiveTicker,
       effectiveMarketIds,
       range,
@@ -218,7 +143,7 @@ export function OverlayChart({ ticker, marketIds, children, className }: Overlay
     )
       .then((result) => {
         if (cancelled) return;
-        setSeries(result);
+        setBundle(result);
         setStatus("done");
       })
       .catch(() => {
@@ -232,26 +157,15 @@ export function OverlayChart({ ticker, marketIds, children, className }: Overlay
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveTicker, JSON.stringify(effectiveMarketIds), range]);
 
-  const seriesById = useMemo(() => new Map((series ?? []).map((s) => [s.id, s])), [series]);
+  const series = bundle?.series ?? null;
+  const stock = series?.find((s) => s.kind === "stock") ?? null;
+  const markets = useMemo(() => (series ?? []).filter((s) => s.kind === "market"), [series]);
 
-  // Series share one time grid (see lib/chart/align.ts), so rows can be keyed by timestamp.
-  const chartData = useMemo<ChartRow[]>(() => {
-    const rows = new Map<number, ChartRow>();
-    for (const s of series ?? []) {
-      for (const p of s.points) {
-        const row = rows.get(p.t) ?? { t: p.t };
-        row[s.id] = p.value;
-        row[`${s.id}__raw`] = p.rawValue;
-        rows.set(p.t, row);
-      }
-    }
-    return [...rows.values()].sort((a, b) => a.t - b.t);
-  }, [series]);
-
-  const domain = useMemo<[number, number] | null>(
-    () => (chartData.length > 0 ? [chartData[0].t, chartData[chartData.length - 1].t] : null),
-    [chartData],
-  );
+  // Shared x-domain for every panel: the stock's span (align.ts makes it the window for all series).
+  const domain = useMemo<[number, number] | null>(() => {
+    const pts = stock?.points ?? [];
+    return pts.length > 0 ? [pts[0].t, pts[pts.length - 1].t] : null;
+  }, [stock]);
 
   const legendEntries = useMemo<LegendEntry[]>(() => {
     if (!series) return [];
@@ -266,22 +180,29 @@ export function OverlayChart({ ticker, marketIds, children, className }: Overlay
     });
   }, [series, mode]);
 
-  const colorById = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const entry of legendEntries) map.set(entry.key, entry.color);
-    return map;
-  }, [legendEntries]);
+  const colorById = useMemo(() => new Map(legendEntries.map((e) => [e.key, e.color])), [legendEntries]);
+
+  // Default to the first market; fall back to it if the picked one was deselected.
+  const relationshipMarket = markets.find((m) => m.id === relationshipPick) ?? markets[0] ?? null;
+  const relationship = useMemo(
+    () =>
+      stock && relationshipMarket
+        ? computeRelationship(alignLevels(stock.points, bundle?.benchmark?.points ?? null, relationshipMarket.points))
+        : null,
+    [stock, bundle, relationshipMarket],
+  );
 
   const emptySeries = (series ?? []).filter((s) => s.points.length === 0);
   const shellClass = className ?? "flex h-full min-h-[360px] w-full flex-col gap-3 rounded-[var(--radius-panel)] p-4";
   const shellStyle = { background: "var(--surface)", border: "1px solid var(--border)" };
+  const relationshipHasChart = relationship?.status === "ok";
 
   // The header (incl. range selector) stays mounted while loading so changing range doesn't flicker it away.
   return (
     <div className={shellClass} style={shellStyle}>
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <h3 className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-          Change since window start
+          Price, odds and relationship
         </h3>
         <RangeSelector />
       </div>
@@ -299,59 +220,46 @@ export function OverlayChart({ ticker, marketIds, children, className }: Overlay
               {s.label}: {s.kind === "market" ? "No trades in this window" : "No data in this window"}
             </p>
           ))}
-          <div className="flex-1">
-            <ResponsiveContainer width="100%" height="100%" minHeight={280}>
-              <LineChart data={chartData} margin={{ top: 12, right: 16, left: 0, bottom: 0 }}>
-                <CartesianGrid stroke="var(--border)" vertical={false} />
-                {/* Numeric time axis: points sit at their real time (irregular spacing is honest),
-                    and evidence markers can use raw epoch ms with no snapping to a category. */}
-                <XAxis
-                  dataKey="t"
-                  type="number"
-                  scale="time"
-                  domain={["dataMin", "dataMax"]}
-                  tickFormatter={formatTick}
-                  stroke="var(--text-tertiary)"
-                  tick={{ fill: "var(--text-tertiary)", fontSize: 12 }}
-                  axisLine={{ stroke: "var(--border)" }}
-                  tickLine={false}
-                />
-                <YAxis
-                  tickFormatter={(v: number) => `${v > 0 ? "+" : ""}${v}`}
-                  stroke="var(--text-tertiary)"
-                  tick={{ fill: "var(--text-tertiary)", fontSize: 12 }}
-                  axisLine={false}
-                  tickLine={false}
-                  label={{
-                    value: "change (stock %, odds pts)",
-                    angle: -90,
-                    position: "insideLeft",
-                    fill: "var(--text-tertiary)",
-                    fontSize: 12,
-                  }}
-                />
-                <Tooltip content={<OverlayTooltip seriesById={seriesById} />} />
-                {series.map((s) => (
-                  <Line
-                    key={s.id}
-                    // Step for odds (they hold the last trade, never ramp); linear for stock closes.
-                    type={s.kind === "market" ? "stepAfter" : "linear"}
-                    dataKey={s.id}
-                    name={s.label}
-                    stroke={colorById.get(s.id) ?? "var(--text-primary)"}
-                    strokeWidth={s.kind === "stock" ? 2.5 : 2}
-                    dot={false}
-                    isAnimationActive={false}
-                    connectNulls
-                  />
-                ))}
-                {domain && <TimelineAnnotations domain={domain} />}
+          {stock && domain ? (
+            <div className="flex flex-1 flex-col gap-2 overflow-y-auto">
+              <PricePanel stock={stock} domain={domain} color="var(--text-primary)">
                 {children}
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
+              </PricePanel>
+              {markets.length > 0 && (
+                <OddsPanel markets={markets} domain={domain} colorById={colorById} showTimeAxis={!relationshipHasChart} />
+              )}
+              <RelationshipPanel
+                result={relationship}
+                markets={markets}
+                selectedId={relationshipMarket?.id ?? null}
+                onSelect={setRelationshipPick}
+                domain={domain}
+                color={relationshipMarket ? (colorById.get(relationshipMarket.id) ?? "var(--accent)") : "var(--accent)"}
+              />
+              <MethodsNote />
+            </div>
+          ) : (
+            <div className="flex flex-1 items-center justify-center" style={{ color: "var(--text-secondary)" }}>
+              No price data in this window.
+            </div>
+          )}
         </>
       )}
     </div>
+  );
+}
+
+function MethodsNote() {
+  return (
+    <details className="px-1 text-xs" style={{ color: "var(--text-tertiary)" }}>
+      <summary className="cursor-pointer">Methods</summary>
+      <ul className="mt-1 list-disc space-y-1 pl-4">
+        <li>Returns, not levels: prices and odds both trend, so correlating levels finds shared drift rather than co-movement. We correlate log returns (stock) with changes in logit odds.</li>
+        <li>Delta-logit: a move from 94% to 97% carries more information than 50% to 53%; the logit stretches the ends of the 0-100 scale so equal changes mean roughly equal evidence.</li>
+        <li>SPY-adjusted: the stock's SPY-explained return (fit by regression over the window) is removed, so the result is the stock-specific part, not just "both follow the market".</li>
+        <li>95% band: Fisher z-transform of r with n = rolling window; it is skewed near +/-1, unlike r plus or minus a constant.</li>
+        <li>Limitation: gaps are forward-filled, so odds with no trade repeat their last value and show a change of exactly 0. This pulls r toward 0 in thin markets; lead-lag steps are grid steps, not fixed durations. The best lag is picked from 13 candidates, so treat it as exploratory.</li>
+      </ul>
+    </details>
   );
 }

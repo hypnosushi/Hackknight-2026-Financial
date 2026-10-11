@@ -4,6 +4,7 @@ export { OverlayChart } from "./OverlayChart";
 export type { OverlayChartProps } from "./OverlayChart";
 
 export { AddEvidenceButtons } from "./AddEvidenceButtons";
+export { EvidenceSidebar } from "./EvidenceSidebar";
 export { EvidencePickerList } from "./EvidencePickerList";
 export { TimelineAnnotations } from "./TimelineAnnotations";
 export { RangeSelector } from "./RangeSelector";

@@ -20,7 +20,8 @@ def test_daily_tier():
 
 
 def test_weekly_and_monthly_share_timeframe():
-    assert tier_timeframe(ZoomTier.WEEKLY) == tier_timeframe(ZoomTier.MONTHLY) == "1Hour"
+    assert tier_timeframe(ZoomTier.WEEKLY) == "5Min"
+    assert tier_timeframe(ZoomTier.MONTHLY) == "30Min"
     weekly_start, _ = tier_range(ZoomTier.WEEKLY, NOW)
     monthly_start, _ = tier_range(ZoomTier.MONTHLY, NOW)
     assert weekly_start == NOW - timedelta(days=7)
@@ -35,7 +36,7 @@ def test_all_time_tier_starts_at_feed_coverage_start():
     assert tier_timeframe(ZoomTier.ALL_TIME) == "1Day"
 
 
-def test_quarterly_is_90_days_of_daily_bars():
+def test_quarterly_is_90_days_of_hourly_bars():
     start, end = tier_range(ZoomTier.QUARTERLY, NOW)
     assert end - start == timedelta(days=90)
-    assert tier_timeframe(ZoomTier.QUARTERLY) == "1Day"
+    assert tier_timeframe(ZoomTier.QUARTERLY) == "1Hour"
