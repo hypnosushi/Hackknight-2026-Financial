@@ -79,15 +79,19 @@ From the event's tags (`market_entities` for its markets, map entities only):
 |---|---|---|
 | 1 | Company entities in the tags | Enrichment already asked Jev "is this market about this company, or would its outcome directly affect it?" for every map company in a chosen category |
 | 2 | Companies linked by `entity_relationships` (filing links, either direction) to a tier-1 company | A supplier, customer, partner or competitor of a directly affected company |
-| 3 | Companies whose `company_tags` include one of the event's resource, country, sector or event tags | e.g. a Crude Oil market → XOM, CVX. Needs `company_tags` (proposed in top-markets-helper, not built) |
+| 3 | Companies whose `company_entity_tags` include one of the event's resource, country, sector or event tags | e.g. a Crude Oil market → every company whose F14 relationship keywords ("oil", "crude") resolved to Crude Oil |
 
 Within a tier: more matched tags first, then the company graph's link `confidence` (tier 2).
 Optional `rerank`: one Jev call scoring "would this market's move matter to an investor in
 {company}?" for every candidate company, drop under 0.5. It mirrors `rerank.py`, with
 companies as the candidates instead of markets.
 
-Without `company_tags`, tier 3 is empty: an oil market only reaches oil companies that Jev
-tagged directly in tier 1, which it usually does for the big names.
+Tier 3 reads `company_entity_tags` in reverse (entity -> companies): company graph F14's
+free-text relationship keywords, resolved once to map entities by `match_tags` and cached (see
+[top-markets-helper.md](./top-markets-helper.md)). It is what reaches companies two steps away,
+such as a memory-chip market reaching a company whose supplier edge is tagged "memory". Until
+F14 has run and the cache is filled, tier 3 is empty and an oil market only reaches the
+companies Jev tagged directly in tier 1.
 
 ### Worker
 
@@ -135,7 +139,8 @@ API (draft, in `backend/api/alerts.py`):
 - Enrichment code and tables ([market-search.md](./market-search.md)), Jev via OpenRouter
   with credits.
 - Company graph: `entity_relationships`, `graph_events` (F7), highlights (F8).
-- `company_tags` from [top-markets-helper.md](./top-markets-helper.md) for tier 3.
+- Company graph F14 (`company_graph/tags.py`, `entity_relationships.tags`) and the
+  `company_entity_tags` cache from [top-markets-helper.md](./top-markets-helper.md), for tier 3.
 
 ## Open Questions
 
@@ -148,7 +153,8 @@ API (draft, in `backend/api/alerts.py`):
   Recommended: 1 now (free), then 3 for the demo, since a live feed is the most visible.
 - **F7 overlap.** F7 already maps alerts to companies by name. Run both (graph_events dedupe on
   company + URL), or replace F7's name matching with this?
-- **Tier 3 source.** Build `company_tags` now (shared with top markets), or ship tiers 1-2 first?
+- **F14 coverage.** F14 is a one-shot script and only tags edges that exist; how many
+  companies have tags today, and should the cache step run automatically after each link run?
 - **Direction.** Show the alert's direction (`yes_up` / `yes_down`) as a plain fact next to the
   impact, or leave direction entirely to F8?
 - **Volume of alerts and Jev cost.** One Jev run per newly seen event, plus one rerank call per
@@ -161,6 +167,8 @@ API (draft, in `backend/api/alerts.py`):
 - Starts from the alert detector's alerts; does not detect anything itself.
 - Reuses event enrichment for the alert's market, on demand, instead of a new classifier.
 - Matching is the top-markets tiers reversed.
+- Tier 3 comes from company graph F14's relationship keywords, resolved to map entities and
+  cached, not a hand-written list.
 - Builds on existing tables; one new table for impacts.
 
 ## Acceptance Criteria
