@@ -2,6 +2,7 @@ import { highlightsFor } from "../../company-graph/highlights";
 import { DIRECTION_COLOR, DIRECTION_LABEL, EVENT_LABEL } from "../../company-graph/labels";
 import type { CompanyGraph, GraphEdge, GraphNode, RelationshipType } from "../../../types/workspaceGraph";
 import { RELATIONSHIP_COLORS, RELATIONSHIP_LABELS } from "./GraphLegend";
+import { PairNewsSection } from "./PairNewsSection";
 
 /**
  * A relationship type names the *target's* role for the source ("supplier"
@@ -71,6 +72,9 @@ export function NodeInfoCard({
         : node.label;
   const events = isPerson ? [] : highlightsFor(graph.highlights ?? [], node.id);
   const title = isPerson ? node.label : (node.name ?? node.label);
+  // News about this company together with the one it's linked to: the searched
+  // ticker when there's a direct link, otherwise its first linked company.
+  const newsPartner = isPerson || node.isCenter ? undefined : (toCenter ?? relations[0])?.other;
 
   return (
     // Below the hop slider. The canvas pane already starts past the projects rail.
@@ -194,6 +198,8 @@ export function NodeInfoCard({
           </a>
         </article>
       ))}
+
+      {newsPartner && <PairNewsSection key={`${newsPartner}-${node.id}`} ticker={newsPartner} other={node.id} />}
     </section>
   );
 }

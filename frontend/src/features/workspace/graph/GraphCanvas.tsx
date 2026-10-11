@@ -4,6 +4,8 @@ import { fetchBoardNetwork, pollCompanyGraph, type GraphFailure } from "../../..
 import type { CompanyGraph, GraphEdge, GraphNode } from "../../../types/workspaceGraph";
 import { useWorkspace } from "../useWorkspace";
 import { useTheme } from "../../theme/useTheme";
+import { latestHighlightBySymbol } from "../../company-graph/highlights";
+import { DIRECTION_COLOR } from "../../company-graph/labels";
 import { GraphLegend, RELATIONSHIP_COLORS } from "./GraphLegend";
 import { HopFilter, MAX_HOPS } from "./HopFilter";
 import { NodeInfoCard } from "./NodeInfoCard";
@@ -180,6 +182,10 @@ export function GraphCanvas() {
   // graphData object — it compares by identity and reheats the simulation
   // on every new one.
   const graphData = useMemo(() => ({ nodes: shown.nodes, links: shown.edges }), [shown]);
+
+  // The newest highlight per company: a company a recent event may affect is
+  // drawn in that highlight's direction color, so it stands out before it's clicked.
+  const highlightBySymbol = useMemo(() => latestHighlightBySymbol(state.graph?.highlights ?? []), [state.graph]);
 
   // Re-frame on whatever the filter leaves — but only once the build-out's
   // own fit has happened, so this never fights the reveal animation.
@@ -470,6 +476,7 @@ export function GraphCanvas() {
           .flatMap((e) => shown.nodes.filter((n) => n.id === endId(e.source)))
       : [];
   const hasPeople = shown.nodes.some((n) => n.kind === "person");
+  const hasHighlights = shown.nodes.some((n) => highlightBySymbol.has(n.id));
 
   return (
     <div ref={setContainerEl} className="relative h-full w-full overflow-hidden" style={{ background: "var(--bg)" }}>
@@ -604,16 +611,26 @@ export function GraphCanvas() {
             const isCenter = !!node.isCenter;
             const isPerson = node.kind === "person";
             const r = nodeRadius(node);
+            const highlight = isCenter || isPerson ? undefined : highlightBySymbol.get(node.id);
 
+            if (highlight) {
+              // Soft halo, like the Company Graph page's highlighted nodes.
+              ctx.beginPath();
+              ctx.arc(x, y, r + 5, 0, 2 * Math.PI);
+              ctx.fillStyle = `${DIRECTION_COLOR[highlight.direction]}33`;
+              ctx.fill();
+            }
             ctx.beginPath();
             ctx.arc(x, y, r, 0, 2 * Math.PI);
             ctx.fillStyle = isCenter
               ? cssVar("--accent", "#3b5bdb")
               : isPerson
                 ? RELATIONSHIP_COLORS["board-interlock"]
-                : cssVar("--surface-elevated", "#fff");
+                : highlight
+                  ? DIRECTION_COLOR[highlight.direction]
+                  : cssVar("--surface-elevated", "#fff");
             ctx.fill();
-            if (!isCenter && !isPerson) {
+            if (!isCenter && !isPerson && !highlight) {
               ctx.lineWidth = 1.5;
               ctx.strokeStyle = cssVar("--border", "#ddd");
               ctx.stroke();
@@ -696,7 +713,7 @@ export function GraphCanvas() {
       )}
       {/* Bottom-left so it clears the hop slider and node card stacked at the top-left. */}
       <div className="absolute bottom-6 left-6 z-10">
-        <GraphLegend showBoardInterlock={hasPeople} ticker={state.ticker} />
+        <GraphLegend showBoardInterlock={hasPeople} showHighlights={hasHighlights} ticker={state.ticker} />
       </div>
     </div>
   );

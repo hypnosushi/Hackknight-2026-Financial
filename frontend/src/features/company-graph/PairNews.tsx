@@ -1,6 +1,4 @@
-import { useEffect, useState } from "react";
-import type { PairNewsResponse } from "../../types/graph";
-import { fetchPairNews } from "./api";
+import { formatPairDate, PAIR_SOURCE_LABEL, usePairNews } from "./usePairNews";
 
 interface Props {
   /** The searched company. */
@@ -11,34 +9,9 @@ interface Props {
   otherName: string;
 }
 
-type State =
-  | { kind: "loading" }
-  | { kind: "error"; message: string }
-  | { kind: "done"; data: PairNewsResponse };
-
-const SOURCE_LABEL: Record<string, string> = { news: "NewsAPI", x: "X" };
-
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { dateStyle: "medium" });
-}
-
 /** Recent news and X posts about the searched company and one linked company together. */
 export default function PairNews({ ticker, tickerName, other, otherName }: Props) {
-  const [state, setState] = useState<State>({ kind: "loading" });
-
-  useEffect(() => {
-    let cancelled = false;
-    setState({ kind: "loading" });
-    fetchPairNews(ticker, other)
-      .then((data) => !cancelled && setState({ kind: "done", data }))
-      .catch((err: unknown) => {
-        if (!cancelled) setState({ kind: "error", message: err instanceof Error ? err.message : String(err) });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [ticker, other]);
+  const state = usePairNews(ticker, other);
 
   return (
     <div className="mt-4 border-t border-slate-200 pt-3">
@@ -64,8 +37,8 @@ export default function PairNews({ ticker, tickerName, other, otherName }: Props
                     {item.title}
                   </a>
                   <p className="text-xs text-slate-500">
-                    {SOURCE_LABEL[item.source] ?? item.source}
-                    {item.by && <> · {item.by}</>} · {formatDate(item.published_at)}
+                    {PAIR_SOURCE_LABEL[item.source] ?? item.source}
+                    {item.by && <> · {item.by}</>} · {formatPairDate(item.published_at)}
                   </p>
                 </li>
               ))}
@@ -73,7 +46,7 @@ export default function PairNews({ ticker, tickerName, other, otherName }: Props
           )}
           {state.data.failed.length > 0 && (
             <p className="mt-2 text-xs text-slate-500">
-              Not searched this time: {state.data.failed.map((s) => SOURCE_LABEL[s] ?? s).join(", ")}.
+              Not searched this time: {state.data.failed.map((s) => PAIR_SOURCE_LABEL[s] ?? s).join(", ")}.
             </p>
           )}
         </>
