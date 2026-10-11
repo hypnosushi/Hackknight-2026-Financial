@@ -6,9 +6,13 @@ from backend.entities import CATEGORIES, load_entities, load_entity_map
 
 
 def test_seed_map_has_about_fifty_entities_in_every_category():
+    # Companies are the exception: the list grew to 100 so names people type ("Intel", "TSMC")
+    # resolve and the graph's neighbourhood is tagged; enrichment batches 50 per Jev call, so
+    # that is one extra call per market, which the team accepted.
     entity_map = load_entity_map()
     for category in CATEGORIES:
-        assert 40 <= len(entity_map.in_category(category)) <= 60, category
+        upper = 110 if category == "company" else 60
+        assert 40 <= len(entity_map.in_category(category)) <= upper, category
 
 
 def test_companies_come_from_the_shared_company_list():

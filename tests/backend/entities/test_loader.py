@@ -3,7 +3,7 @@ from backend.entities import load_entities
 
 def test_load_entities_returns_seed_list():
     entities = load_entities()
-    assert len(entities) == 55
+    assert len(entities) == 100
 
 
 def test_load_entities_has_expected_fields():

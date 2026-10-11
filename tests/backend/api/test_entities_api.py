@@ -124,7 +124,8 @@ def test_rerank_scores_the_candidates_and_returns_the_best(top_client, monkeypat
     body = top_client.get("/entities/NVDA/top-markets",
                           params=[("tags", "microchips"), ("rerank", "true"), ("candidates", "40")]).json()
     assert top_client.calls["limit"] == 40  # candidates, not limit, are fetched
-    assert top_client.calls["rerank"] == ("NVIDIA Corporation", ["Semiconductors", "TSM"], 1)
+    # TSM is in the map now, so the rerank gets its name rather than the bare ticker.
+    assert top_client.calls["rerank"] == ("NVIDIA Corporation", ["Semiconductors", "Taiwan Semiconductor Manufacturing Company"], 1)
     assert body["markets"][0]["relevance"] == 0.912
 
 
