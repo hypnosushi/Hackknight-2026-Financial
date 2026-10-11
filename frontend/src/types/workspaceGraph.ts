@@ -1,3 +1,5 @@
+import type { GraphHighlight } from "./graph";
+
 /**
  * The company-to-company values match the backend's (company_graph/schemas.py),
  * so nothing has to be translated at the API boundary. "board-interlock" is
@@ -19,6 +21,8 @@ export interface GraphNode {
   label: string;
   /** A company's full legal name; `label` is its ticker, which is what fits on the canvas. */
   name?: string;
+  /** A company's industry, as SEC classifies it. */
+  industry?: string;
   /** The ticker the user searched for — rendered with --accent, everything else neutral. */
   isCenter?: boolean;
   /** Only present on kind: "person" nodes (Stage 2 board-of-directors sub-network). */
@@ -38,6 +42,8 @@ export interface GraphEdge {
 export interface CompanyGraph {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  /** Recent events that may affect a linked company, as the backend returned them. */
+  highlights?: GraphHighlight[];
 }
 
 // Relationship names used before the workspace adopted the backend's.

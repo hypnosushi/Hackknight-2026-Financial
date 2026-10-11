@@ -18,10 +18,23 @@ export function toWorkspaceGraph(response: CompanyGraphResponse): CompanyGraph {
   const { company } = response;
   return {
     nodes: [
-      { id: company.symbol, kind: "company", label: company.symbol, name: company.name, isCenter: true },
+      {
+        id: company.symbol,
+        kind: "company",
+        label: company.symbol,
+        name: company.name,
+        industry: company.industry ?? undefined,
+        isCenter: true,
+      },
       ...response.nodes
         .filter((n) => n.symbol !== company.symbol)
-        .map((n) => ({ id: n.symbol, kind: "company" as const, label: n.symbol, name: n.name })),
+        .map((n) => ({
+          id: n.symbol,
+          kind: "company" as const,
+          label: n.symbol,
+          name: n.name,
+          industry: n.industry ?? undefined,
+        })),
     ],
     edges: response.links.map((l) => ({
       source: l.source,
@@ -30,6 +43,7 @@ export function toWorkspaceGraph(response: CompanyGraphResponse): CompanyGraph {
       summary: l.summary,
       evidenceUrl: l.evidence_url,
     })),
+    highlights: response.highlights,
   };
 }
 

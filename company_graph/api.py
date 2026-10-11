@@ -51,6 +51,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
+from backend.models.graph_company_profile import GraphCompanyProfile
 from backend.models.graph_event import GraphEvent
 from backend.models.graph_highlight import GraphHighlight
 from company_graph import boards as graph_boards
@@ -64,6 +65,7 @@ from company_graph.schemas import (
     BoardMemberOut,
     BoardResponse,
     CompanyOut,
+    GraphCompanyOut,
     GraphResponse,
     HighlightOut,
     LinkOut,
@@ -250,7 +252,7 @@ def fake_search(q: str, limit: int = SEARCH_LIMIT) -> list[CompanyOut]:
 
 
 def _empty_graph(symbol: str, name: str, status: str = "done") -> GraphResponse:
-    return GraphResponse(company=CompanyOut(symbol=symbol, name=name), status=status,
+    return GraphResponse(company=GraphCompanyOut(symbol=symbol, name=name), status=status,
                          nodes=[], links=[], highlights=[])
 
 
@@ -351,6 +353,30 @@ async def read_highlights(session, targets: list[str], now: datetime, cfg: graph
     return out
 
 
+# --- industries ----------------------------------------------------------------------
+
+async def read_industries(session, symbols: list[str]) -> dict[str, str]:
+    """SEC's industry (SIC) description per company, from `graph_company_profiles`. Read-only.
+
+    A link run saves the description for the company it was run for, but only the code for the
+    companies it found through the reverse search. Those borrow the description from another of
+    these companies with the same code. A company with no profile, or a code nobody here
+    describes, is left out.
+    """
+    if not symbols:
+        return {}
+    rows = (await session.execute(
+        select(GraphCompanyProfile).where(GraphCompanyProfile.symbol.in_(symbols))
+    )).scalars().all()
+    by_code = {r.sic_code: r.sic_description for r in rows if r.sic_code and r.sic_description}
+    out: dict[str, str] = {}
+    for r in rows:
+        description = r.sic_description or by_code.get(r.sic_code)
+        if description:
+            out[r.symbol] = description
+    return out
+
+
 # --- link runs -----------------------------------------------------------------------
 
 def _task_running(symbol: str) -> bool:
@@ -447,12 +473,15 @@ async def get_graph(
                                                              build=build_highlights, directory=directory, now=now):
                 status = "running"
             highlights = await read_highlights(session, [n.symbol for n in nodes], now, cfg)
+            industries = await read_industries(session, [company.symbol, *(n.symbol for n in nodes)])
+            nodes = [n.model_copy(update={"industry": industries.get(n.symbol)}) for n in nodes]
     except (SQLAlchemyError, OSError) as exc:
         log.warning("graph read for %s failed: %s", company.symbol, exc)
         raise HTTPException(status_code=503, detail="The team database is unavailable") from exc
 
-    return GraphResponse(company=CompanyOut(symbol=company.symbol, name=company.name), status=status,
-                         nodes=nodes, links=out_links, highlights=highlights)
+    return GraphResponse(company=GraphCompanyOut(symbol=company.symbol, name=company.name,
+                                                 industry=industries.get(company.symbol)),
+                         status=status, nodes=nodes, links=out_links, highlights=highlights)
 
 
 @router.get("/graph/{ticker}/board", response_model=BoardResponse)

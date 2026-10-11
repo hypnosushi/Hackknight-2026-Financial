@@ -6,6 +6,7 @@ import { useWorkspace } from "../useWorkspace";
 import { useTheme } from "../../theme/useTheme";
 import { GraphLegend, RELATIONSHIP_COLORS } from "./GraphLegend";
 import { HopFilter, MAX_HOPS } from "./HopFilter";
+import { NodeInfoCard } from "./NodeInfoCard";
 import { companyHops, computeGraphLayout, moveCompany, targetForce, type GraphLayout, type Point } from "./graphLayout";
 
 /** Reads a theme CSS variable at draw time so canvas-rendered nodes stay in sync
@@ -140,6 +141,9 @@ export function GraphCanvas() {
   // Hop filter. Hop counts come from the full graph, not what's been
   // revealed so far, so they don't shift during the build-out.
   const [maxHops, setMaxHops] = useState(MAX_HOPS);
+  // The node whose details card is open, by id — the node objects themselves
+  // are mutated by the simulation, so they make poor state.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const hops = useMemo(() => {
     const graph = state.graph;
     if (!graph) return new Map<string, number>();
@@ -266,6 +270,7 @@ export function GraphCanvas() {
     layoutRef.current = EMPTY_LAYOUT;
     movedCompaniesRef.current.clear();
     setMaxHops(MAX_HOPS);
+    setSelectedId(null);
     setGraphFailure(null);
     setVisible({ nodes: [], edges: [] });
     return () => {
@@ -455,6 +460,15 @@ export function GraphCanvas() {
     return <EmptyCanvas containerRef={setContainerEl} />;
   }
 
+  // Looked up among what's drawn, so hiding a node with the hop slider also
+  // closes its card.
+  const selectedNode = shown.nodes.find((n) => n.id === selectedId);
+  const selectedBoards =
+    selectedNode?.kind === "person"
+      ? shown.edges
+          .filter((e) => e.relationship === "board-interlock" && endId(e.target) === selectedNode.id)
+          .flatMap((e) => shown.nodes.filter((n) => n.id === endId(e.source)))
+      : [];
   const hasPeople = shown.nodes.some((n) => n.kind === "person");
 
   return (
@@ -525,6 +539,13 @@ export function GraphCanvas() {
           backgroundColor="rgba(0,0,0,0)"
           cooldownTicks={200}
           d3VelocityDecay={0.3}
+          // Click a node for its details; click it again, or the empty
+          // canvas, to dismiss. A drag doesn't count as a click.
+          onNodeClick={(node: NodeObject<GraphNode>) => {
+            const id = String(node.id);
+            setSelectedId((prev) => (prev === id ? null : id));
+          }}
+          onBackgroundClick={() => setSelectedId(null)}
           // A company's board follows it live while it's being dragged.
           onNodeDrag={(node: NodeObject<GraphNode>) => {
             if (node.kind !== "company") return;
@@ -597,6 +618,14 @@ export function GraphCanvas() {
               ctx.strokeStyle = cssVar("--border", "#ddd");
               ctx.stroke();
             }
+            // Ring around the node whose details card is open.
+            if (node.id === selectedId) {
+              ctx.beginPath();
+              ctx.arc(x, y, r + 2.5, 0, 2 * Math.PI);
+              ctx.lineWidth = 1.5;
+              ctx.strokeStyle = cssVar("--accent", "#3b5bdb");
+              ctx.stroke();
+            }
 
             // Person nodes stay unlabeled dots until the user zooms in far
             // enough — the main graph would get cluttered with a name for
@@ -657,6 +686,14 @@ export function GraphCanvas() {
       )}
 
       <HopFilter value={maxHops} onChange={setMaxHops} />
+      {selectedNode && state.graph && (
+        <NodeInfoCard
+          node={selectedNode}
+          graph={state.graph}
+          boards={selectedBoards}
+          onClose={() => setSelectedId(null)}
+        />
+      )}
       <GraphLegend showBoardInterlock={hasPeople} ticker={state.ticker} />
     </div>
   );

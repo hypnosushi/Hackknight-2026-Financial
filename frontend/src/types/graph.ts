@@ -28,10 +28,17 @@ export interface CompanyRef {
   name: string;
 }
 
+/** The searched company in a graph response. */
+export interface GraphCompany extends CompanyRef {
+  /** SEC's industry (SIC) description; null when SEC lists none for the company. */
+  industry?: string | null;
+}
+
 export interface GraphNode {
   symbol: string;
   name: string;
   type: RelationshipType;
+  industry?: string | null;
 }
 
 export interface GraphLink {
@@ -53,7 +60,7 @@ export interface GraphHighlight {
 }
 
 export interface CompanyGraphResponse {
-  company: CompanyRef;
+  company: GraphCompany;
   status: GraphStatus;
   nodes: GraphNode[];
   links: GraphLink[];

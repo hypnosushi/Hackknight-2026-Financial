@@ -41,10 +41,17 @@ class CompanyOut(_Strict):
     name: str
 
 
+class GraphCompanyOut(CompanyOut):
+    """The searched company in a graph. Search results and boards keep the plain CompanyOut."""
+
+    industry: str | None = None  # SEC's SIC description; None when SEC has not told us one
+
+
 class NodeOut(_Strict):
     symbol: str
     name: str
     type: RelationshipType
+    industry: str | None = None
 
 
 class LinkOut(_Strict):
@@ -66,7 +73,7 @@ class HighlightOut(_Strict):
 
 
 class GraphResponse(_Strict):
-    company: CompanyOut
+    company: GraphCompanyOut
     status: RunStatus
     nodes: list[NodeOut]
     links: list[LinkOut]

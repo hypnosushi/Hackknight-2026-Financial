@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from backend.models.entity import Entity
 from backend.models.entity_relationship import EntityRelationship
+from backend.models.graph_company_profile import GraphCompanyProfile
 from backend.models.graph_event import GraphEvent
 from backend.models.graph_highlight import GraphHighlight
 from backend.models.graph_link_run import GraphLinkRun
@@ -222,7 +223,7 @@ def test_first_request_runs_then_done_with_links(engine):
         assert first.status_code == 200
         body = first.json()
         assert body["status"] == "running"
-        assert body["company"] == {"symbol": "TSLA", "name": "Tesla, Inc."}
+        assert body["company"] == {"symbol": "TSLA", "name": "Tesla, Inc.", "industry": None}  # no profile saved
         assert body["nodes"] == [] and body["links"] == []
 
         # A poll while the run is going: still running, and no second run.
@@ -267,6 +268,25 @@ def test_fresh_links_are_done_without_a_run(engine):
     assert first["status"] == "running" and len(first["links"]) == 4
     assert body["status"] == "done" and len(body["links"]) == 4
     assert build.calls == [] and highlights.calls == ["TSLA"]
+
+
+def test_industry_comes_from_the_company_profiles(engine):
+    with Session(engine) as s:
+        seed_links(s)
+        set_run(s, "TSLA", "done", _now() - timedelta(days=1))
+        s.add_all([
+            GraphCompanyProfile(symbol="TSLA", cik=1318605, sic_code="3711",
+                                sic_description="Motor Vehicles & Passenger Car Bodies"),
+            GraphCompanyProfile(symbol="F", cik=37996, sic_code="3711"),  # code only: borrows TSLA's description
+            GraphCompanyProfile(symbol="ALB", cik=915913, sic_code="2821"),  # a code nobody here describes
+        ])
+        s.commit()
+    with TestClient(make_app(db=SqliteDb(engine), build=FakeBuild(), highlights=FakeHighlights())) as client:
+        body = client.get("/graph/TSLA").json()
+        wait_for_highlights_done()
+    industry = {n["symbol"]: n["industry"] for n in body["nodes"]}
+    assert body["company"]["industry"] == "Motor Vehicles & Passenger Car Bodies"
+    assert industry == {"F": "Motor Vehicles & Passenger Car Bodies", "ALB": None, "NVDA": None}
 
 
 def test_stale_links_are_returned_while_a_new_run_starts(engine):
@@ -447,7 +467,7 @@ def test_fake_mode_serves_fixtures_without_database_or_network(monkeypatch):
         assert client.get("/graph/tsla").json()["company"]["symbol"] == "TSLA"
 
         unknown = client.get("/graph/ZZZZ").json()
-        assert unknown == {"company": {"symbol": "ZZZZ", "name": "ZZZZ"}, "status": "done",
+        assert unknown == {"company": {"symbol": "ZZZZ", "name": "ZZZZ", "industry": None}, "status": "done",
                            "nodes": [], "links": [], "highlights": []}
 
         hits = client.get("/companies/search", params={"q": "te"}).json()
