@@ -15,3 +15,6 @@ export interface ContentItem {
   /** Tweets only (backend twitter_lookup.models.Engagement). */
   engagement?: { likes: number; reposts: number; replies: number; quotes: number };
 }
+
+/** Jev's sentiment label for one item (backend POST /classification/sentiment). */
+export type Sentiment = "positive" | "negative" | "neutral";

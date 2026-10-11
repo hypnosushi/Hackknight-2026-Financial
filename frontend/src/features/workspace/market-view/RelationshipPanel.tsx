@@ -3,6 +3,7 @@ import { describeLeadLag, MIN_PAIRS, type RelationshipResult } from "../../../li
 import type { NormalizedSeries } from "../../../types/market";
 import { AXIS_TICK, PANEL_MARGIN, TOOLTIP_STYLE, Y_AXIS_WIDTH, formatTooltipDate } from "./panelCommon";
 import { TimeAxis } from "./TimeAxis";
+import { TIP_HEADROOM, TimelineAnnotations } from "./TimelineAnnotations";
 
 interface RelationshipPanelProps {
   result: RelationshipResult | null; // null = no market selected
@@ -66,7 +67,7 @@ export function RelationshipPanel({
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart
                 data={result.rolling.map((p) => ({ t: p.t, r: p.r, band: [p.lo, p.hi] }))}
-                margin={{ ...PANEL_MARGIN, bottom: 4 }}
+                margin={{ ...PANEL_MARGIN, top: TIP_HEADROOM, bottom: 4 }}
               >
                 <CartesianGrid stroke="var(--border)" vertical={false} />
                 <TimeAxis domain={domain} show />
@@ -89,6 +90,8 @@ export function RelationshipPanel({
                       : [Number(v).toFixed(2), "r"]
                   }
                 />
+                {/* The same evidence tags and dotted lines as the price chart, so a move in r can be read against the news. */}
+                <TimelineAnnotations domain={domain} />
                 <Area
                   type="monotone"
                   dataKey="band"

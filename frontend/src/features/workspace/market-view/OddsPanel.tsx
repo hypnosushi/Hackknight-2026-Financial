@@ -1,7 +1,9 @@
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, YAxis } from "recharts";
 import type { NormalizedSeries } from "../../../types/market";
-import { AXIS_TICK, PANEL_MARGIN, TOOLTIP_STYLE, Y_AXIS_WIDTH, formatTooltipDate } from "./panelCommon";
+import { PANEL_MARGIN, TIME_SYNC, TOOLTIP_STYLE, Y_AXIS_WIDTH, formatTooltipDate } from "./panelCommon";
+import { EdgeTick, type EdgeTickProps } from "./EdgeTick";
 import { TimeAxis } from "./TimeAxis";
+import { TimelineAnnotations } from "./TimelineAnnotations";
 
 interface OddsPanelProps {
   markets: NormalizedSeries[];
@@ -30,6 +32,8 @@ function fitDomain(markets: NormalizedSeries[]): [number, number] {
   return [Math.max(0, Math.floor(lo - pad)), Math.min(100, Math.ceil(hi + pad))];
 }
 
+const OddsTick = (props: EdgeTickProps) => <EdgeTick {...props} format={(v) => `${v}%`} hangTop />;
+
 /** Real 0-100% axis: a 3-point move looks like 3 points, not an amplified rescale. */
 export function OddsPanel({
   markets,
@@ -50,7 +54,7 @@ export function OddsPanel({
   return (
     <div aria-label="Market odds" className="w-full" style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={PANEL_MARGIN}>
+        <LineChart data={data} margin={{ ...PANEL_MARGIN, top: 0 }} {...TIME_SYNC}>
           <CartesianGrid stroke="var(--border)" vertical={false} />
           <TimeAxis domain={domain} show={showTimeAxis} />
           <YAxis
@@ -58,7 +62,7 @@ export function OddsPanel({
             domain={fit ? fitDomain(markets) : [0, 100]}
             ticks={fit ? undefined : [0, 25, 50, 75, 100]}
             tickFormatter={(v: number) => `${v}%`}
-            tick={AXIS_TICK}
+            tick={OddsTick}
             axisLine={false}
             tickLine={false}
           />
@@ -67,6 +71,8 @@ export function OddsPanel({
             labelFormatter={(t) => formatTooltipDate(Number(t))}
             formatter={(v, key) => [`${Number(v).toFixed(1)}%`, labelById.get(String(key)) ?? String(key)]}
           />
+          {/* Evidence lines continue down from the price panel; its tags stay up there. */}
+          <TimelineAnnotations domain={domain} variant="lines" />
           {markets.map((m) => (
             // stepAfter: a market's price IS its last trade, so a curve would imply prices that never traded.
             <Line

@@ -7,7 +7,7 @@ import { useTheme } from "../../theme/useTheme";
 import { latestHighlightBySymbol } from "../../company-graph/highlights";
 import { DIRECTION_COLOR } from "../../company-graph/labels";
 import { GraphLegend, RELATIONSHIP_COLORS } from "./GraphLegend";
-import { HopFilter, MAX_HOPS } from "./HopFilter";
+import { DEFAULT_HOPS, HopFilter } from "./HopFilter";
 import { NodeInfoCard } from "./NodeInfoCard";
 import { companyHops, computeGraphLayout, moveCompany, targetForce, type GraphLayout, type Point } from "./graphLayout";
 
@@ -48,7 +48,6 @@ function nodeRadius(node: GraphNode): number {
 // Size of the direction arrow on supplier/customer edges, in graph units.
 const ARROW_LENGTH = 9;
 const ARROW_HALF_WIDTH = 4.5;
-
 
 type VisibleGraph = { nodes: GraphNode[]; edges: GraphEdge[] };
 /** One board seat: a person and the company -> person edge that seats them. */
@@ -142,7 +141,7 @@ export function GraphCanvas() {
   const movedCompaniesRef = useRef(new Map<string, Point>());
   // Hop filter. Hop counts come from the full graph, not what's been
   // revealed so far, so they don't shift during the build-out.
-  const [maxHops, setMaxHops] = useState(MAX_HOPS);
+  const [maxHops, setMaxHops] = useState(DEFAULT_HOPS);
   // The node whose details card is open, by id — the node objects themselves
   // are mutated by the simulation, so they make poor state.
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -236,7 +235,10 @@ export function GraphCanvas() {
     fg.d3Force("link")?.strength(0);
     fg.d3Force("charge", null);
     fg.d3Force("center", null);
-    fg.d3Force("layout", targetForce((id) => layoutRef.current.targets.get(id), LAYOUT_PULL));
+    fg.d3Force(
+      "layout",
+      targetForce((id) => layoutRef.current.targets.get(id), LAYOUT_PULL),
+    );
   }, [graphMounted]);
 
   // Stage 1 — fetch the company graph, and keep polling while the backend is
@@ -275,7 +277,7 @@ export function GraphCanvas() {
     fitZoomRef.current = null;
     layoutRef.current = EMPTY_LAYOUT;
     movedCompaniesRef.current.clear();
-    setMaxHops(MAX_HOPS);
+    setMaxHops(DEFAULT_HOPS);
     setSelectedId(null);
     setGraphFailure(null);
     setVisible({ nodes: [], edges: [] });
@@ -321,7 +323,9 @@ export function GraphCanvas() {
       layoutRef.current = computeGraphLayout(
         companies,
         current.edges,
-        build.seats.filter((s) => ids.has(s.edge.source)).map((s) => ({ companyId: s.edge.source, personId: s.person.id })),
+        build.seats
+          .filter((s) => ids.has(s.edge.source))
+          .map((s) => ({ companyId: s.edge.source, personId: s.person.id })),
       );
       // A fresh layout knows nothing about companies the user has dragged —
       // move them (and their boards) back to where they were dropped.
@@ -389,7 +393,9 @@ export function GraphCanvas() {
     // Queue the companies that are new in this version, center first, each
     // one a stagger after the last (including ones queued by earlier versions).
     const now = performance.now();
-    const fresh = companies.filter((c) => !build.queued.has(c.id)).sort((a, b) => Number(!!b.isCenter) - Number(!!a.isCenter));
+    const fresh = companies
+      .filter((c) => !build.queued.has(c.id))
+      .sort((a, b) => Number(!!b.isCenter) - Number(!!a.isCenter));
     for (const node of fresh) {
       build.queued.add(node.id);
       const at = Math.max(now, build.nextRevealAt);
@@ -584,7 +590,10 @@ export function GraphCanvas() {
             if (relationship !== "supplier" && relationship !== "customer") return;
             // GraphEdge types the ends as id strings, but the simulation swaps
             // them for the live node objects once the link is in play.
-            const { source, target } = link as unknown as { source: PositionedNode | string; target: PositionedNode | string };
+            const { source, target } = link as unknown as {
+              source: PositionedNode | string;
+              target: PositionedNode | string;
+            };
             if (typeof source !== "object" || typeof target !== "object") return;
             const [from, to] = relationship === "supplier" ? [target, source] : [source, target];
             const dx = (to.x ?? 0) - (from.x ?? 0);

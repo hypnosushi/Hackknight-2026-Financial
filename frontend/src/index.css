@@ -193,3 +193,14 @@ body {
   color: var(--text-primary);
   font-family: var(--font-sans);
 }
+
+/*
+ * Recharts makes each chart's SVG keyboard-focusable (for arrow-key tooltips), and
+ * clicking a chart then draws the browser's focus ring around the whole plot.
+ * The ring goes; keyboard users still get the tooltip appearing as their focus cue.
+ */
+.recharts-wrapper:focus,
+.recharts-wrapper :focus,
+.recharts-surface:focus {
+  outline: none;
+}

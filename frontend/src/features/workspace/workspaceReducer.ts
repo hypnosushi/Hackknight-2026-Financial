@@ -20,6 +20,7 @@ export type WorkspaceAction =
   | { type: "RANGE_CHANGED"; range: ChartRange }
   | { type: "GENERATE_PRESSED" } // Stage 5 — slide transition into market-view
   | { type: "EVIDENCE_ADDED"; annotation: EvidenceAnnotation }
+  | { type: "EVIDENCE_REMOVED"; itemId: string } // by the tweet/article id, which is all the picker knows
   | { type: "EVIDENCE_PINNED"; annotationId: string | null }
   | { type: "QUERY_RESULT_ADDED"; result: QueryResult }
   | { type: "PROJECT_LOADED"; project: Project }
@@ -109,6 +110,17 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
     case "EVIDENCE_ADDED":
       if (state.evidence.some((e) => e.id === action.annotation.id)) return state;
       return { ...state, evidence: [...state.evidence, action.annotation] };
+
+    case "EVIDENCE_REMOVED": {
+      const removed = state.evidence.filter((e) => e.item.id === action.itemId);
+      if (removed.length === 0) return state;
+      return {
+        ...state,
+        evidence: state.evidence.filter((e) => e.item.id !== action.itemId),
+        // Don't leave the drawer pointing at evidence that no longer exists.
+        pinnedAnnotationId: removed.some((e) => e.id === state.pinnedAnnotationId) ? null : state.pinnedAnnotationId,
+      };
+    }
 
     case "EVIDENCE_PINNED":
       return { ...state, pinnedAnnotationId: action.annotationId };

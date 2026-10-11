@@ -1,5 +1,5 @@
 import type { ChartRange } from "./market";
-import type { ContentItem } from "./content";
+import type { ContentItem, Sentiment } from "./content";
 import type { CompanyGraph } from "./workspaceGraph";
 
 export type WorkspaceStage =
@@ -17,6 +17,8 @@ export interface EvidenceAnnotation {
   item: ContentItem;
   /** Resolved once from item.published_at so chart code doesn't re-parse repeatedly. */
   timestamp: string;
+  /** Jev's sentiment for the item when it was added; absent if it hadn't been classified yet. */
+  sentiment?: Sentiment;
 }
 
 export interface QueryResult {

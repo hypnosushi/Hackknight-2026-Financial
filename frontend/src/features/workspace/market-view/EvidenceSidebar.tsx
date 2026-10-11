@@ -9,9 +9,11 @@ import {
   type NewsSearchField,
   type TweetFilters,
 } from "../../../lib/api/evidence";
-import type { ContentItem } from "../../../types/content";
+import { classifySentiments } from "../../../lib/api/sentiment";
+import type { ContentItem, Sentiment } from "../../../types/content";
 import type { EvidenceAnnotation } from "../../../types/project";
 import { useWorkspace } from "../useWorkspace";
+import { SENTIMENT_COLOR, SENTIMENT_GLYPH, SENTIMENT_LABEL } from "./sentiment";
 
 type Kind = "tweets" | "news";
 
@@ -70,6 +72,21 @@ export function EvidenceSidebar() {
     news: "loading",
   });
 
+  // Jev sentiment per item id, filled in after each list loads. Cards render
+  // right away and pick up their color when this arrives.
+  const [sentiments, setSentiments] = useState<Map<string, Sentiment>>(new Map());
+  useEffect(() => {
+    const all = [...items.tweets, ...items.news];
+    if (all.length === 0) return;
+    let cancelled = false;
+    classifySentiments(all).then((found) => {
+      if (!cancelled) setSentiments(found);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [items]);
+
   // One effect per tab so switching tabs never refetches the other one, and a
   // superseded request can't overwrite a newer one.
   useEffect(() => {
@@ -118,11 +135,16 @@ export function EvidenceSidebar() {
     }
   }
 
-  function add(item: ContentItem) {
+  function toggle(item: ContentItem) {
+    if (addedIds.has(item.id)) {
+      dispatch({ type: "EVIDENCE_REMOVED", itemId: item.id });
+      return;
+    }
     const annotation: EvidenceAnnotation = {
       id: `evidence-${item.id}-${Date.now()}`,
       item,
       timestamp: item.published_at,
+      sentiment: sentiments.get(item.id),
     };
     dispatch({ type: "EVIDENCE_ADDED", annotation });
   }
@@ -352,17 +374,24 @@ export function EvidenceSidebar() {
         <ul className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto pr-1">
           {list.map((item) => {
             const added = addedIds.has(item.id);
+            const sentiment = sentiments.get(item.id);
+            const edge = added ? "var(--accent)" : "var(--border)";
             return (
               <li key={item.id}>
                 <button
                   type="button"
-                  disabled={added}
-                  onClick={() => add(item)}
+                  onClick={() => toggle(item)}
+                  title={added ? "Click to remove from evidence" : "Click to add as evidence"}
                   aria-pressed={added}
-                  className="flex w-full flex-col gap-1 px-2.5 py-2 text-left disabled:cursor-default"
+                  className="flex w-full flex-col gap-1 px-2.5 py-2 text-left"
                   style={{
                     background: "var(--bg)",
-                    border: `1px solid ${added ? "var(--accent)" : "var(--border)"}`,
+                    // Longhands only (no `border` shorthand): React warns when a
+                    // shorthand and a side-specific property change independently.
+                    // The 3px left edge carries sentiment; the accent ring marks "added".
+                    borderStyle: "solid",
+                    borderWidth: "1px 1px 1px 3px",
+                    borderColor: `${edge} ${edge} ${edge} ${sentiment ? SENTIMENT_COLOR[sentiment] : "var(--border)"}`,
                     boxShadow: added ? "0 0 0 1px var(--accent)" : "none",
                     borderRadius: "var(--radius-control)",
                   }}
@@ -372,6 +401,15 @@ export function EvidenceSidebar() {
                     <span className="truncate font-medium" style={{ color: "var(--text-secondary)" }}>
                       {item.author ?? new URL(item.url, "http://x").hostname}
                     </span>
+                    {sentiment && (
+                      <span
+                        className="shrink-0 font-semibold"
+                        style={{ color: SENTIMENT_COLOR[sentiment] }}
+                        title={`${SENTIMENT_LABEL[sentiment]} sentiment (Jev)`}
+                      >
+                        {SENTIMENT_GLYPH[sentiment]} {SENTIMENT_LABEL[sentiment]}
+                      </span>
+                    )}
                     <span className="ml-auto shrink-0">{formatDate(item.published_at)}</span>
                     {added && <CheckCircle size={14} weight="fill" style={{ color: "var(--accent)" }} />}
                   </div>

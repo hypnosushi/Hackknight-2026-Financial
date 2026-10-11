@@ -10,7 +10,6 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <WorkspacePage /> },
       { path: "project/:projectId", element: <ProjectPage /> },
-      { path: "company-graph", lazy: () => import("./pages/CompanyGraphPage").then((m) => ({ Component: m.default })) },
     ],
   },
 ]);

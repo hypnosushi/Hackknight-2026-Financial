@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { WorkspaceProvider } from "../features/workspace/WorkspaceProvider";
 import { TickerInput, GraphCanvas } from "../features/workspace/graph";
 import { PredictionMarketPanel } from "../features/workspace/graph/PredictionMarketPanel";
@@ -7,7 +6,6 @@ import {
   WorkspaceTransition,
   OverlayChart,
   EvidenceSidebar,
-  type ChartView,
   EvidenceDrawer,
   QueryCard,
 } from "../features/workspace/market-view";
@@ -42,32 +40,25 @@ function GraphColumn() {
 }
 
 function MarketViewColumn() {
-  const [view, setView] = useState<ChartView>("main");
-  // The correlation chart doesn't draw evidence markers, so the evidence
-  // sidebar is hidden there and the chart takes its width.
-  const showEvidence = view === "main";
-
   return (
     <div className="flex h-full w-full">
       {/* pl-20 (not p-6 on all sides): the projects rail overlays this pane at
           a higher z-index, so content needs clearance from the true left edge.
           The scroll area has no header row, so the chart gets the full height;
-          Save floats bottom-left of this column (its popover opens upward),
+          Save is a small square button floating bottom-right of this column,
           and pb-20 lets the last content scroll clear of it. */}
       <div className="relative min-w-0 flex-1">
         <div className="flex h-full flex-col gap-5 overflow-y-auto py-6 pb-20 pl-20 pr-6">
-          <OverlayChart view={view} onViewChange={setView} />
+          <OverlayChart />
           <QueryCard />
         </div>
-        <div className="absolute bottom-6 left-20 z-10">
-          <SaveProjectButton placement="above" align="left" />
+        <div className="absolute bottom-6 right-6 z-10">
+          <SaveProjectButton />
         </div>
       </div>
-      {showEvidence && (
-        <aside className="h-full w-80 shrink-0">
-          <EvidenceSidebar />
-        </aside>
-      )}
+      <aside className="h-full w-80 shrink-0">
+        <EvidenceSidebar />
+      </aside>
     </div>
   );
 }

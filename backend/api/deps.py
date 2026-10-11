@@ -3,19 +3,26 @@ built once from .env rather than re-reading env vars on every request.
 """
 
 import asyncio
+import logging
 import os
+import time
 from functools import lru_cache
 
 import httpx
 from fastapi import HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
+from backend.classification.sentiment_cache import PostgresSentimentStore, SentimentStore
 from backend.ingestion.common.db import make_engine
+from backend.models.base import Base
+from backend.models.sentiment_cache import SentimentCache
 
 from backend.ingestion.alpaca import AlpacaApiGateway
 from backend.ingestion.kalshi.kalshi import REST_URL as KALSHI_REST_URL
 from backend.ingestion.news_api import NewsApiGateway
 from backend.ingestion.twitter_lookup import TwitterApiGateway
+
+logger = logging.getLogger(__name__)
 
 
 @lru_cache
@@ -67,3 +74,33 @@ async def get_db_engine() -> AsyncEngine:
                     raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Set DATABASE_URL in .env")
                 _engine = make_engine(url)
     return _engine
+
+
+_sentiment_store: SentimentStore | None = None
+_sentiment_store_failed_at = 0.0
+SENTIMENT_STORE_RETRY_S = 60.0
+
+
+async def get_sentiment_store() -> SentimentStore | None:
+    """The sentiment cache, or None when there's no usable database.
+
+    None (never an error) keeps /classification/sentiment working, just uncached. After a
+    failed connection it doesn't retry for a minute, so a down database costs one slow
+    request, not one per call.
+    """
+    global _sentiment_store, _sentiment_store_failed_at
+    if _sentiment_store is not None:
+        return _sentiment_store
+    if time.monotonic() - _sentiment_store_failed_at < SENTIMENT_STORE_RETRY_S:
+        return None
+    try:
+        engine = await get_db_engine()
+        async with engine.begin() as conn:
+            # Only this table: the shared DB's other tables belong to their own packages.
+            await conn.run_sync(Base.metadata.create_all, tables=[SentimentCache.__table__])
+        _sentiment_store = PostgresSentimentStore(async_sessionmaker(engine, expire_on_commit=False))
+    except Exception as exc:  # no DATABASE_URL (HTTPException) or an unreachable database
+        logger.warning("Sentiment cache unavailable (%s); classifying without it", exc)
+        _sentiment_store_failed_at = time.monotonic()
+        return None
+    return _sentiment_store

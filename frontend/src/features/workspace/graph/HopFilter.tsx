@@ -1,4 +1,6 @@
 export const MAX_HOPS = 3;
+/** Start on direct relationships only; widen from there. */
+export const DEFAULT_HOPS = 1;
 
 /**
  * Limits the graph to companies within N hops of the searched one. A hop is

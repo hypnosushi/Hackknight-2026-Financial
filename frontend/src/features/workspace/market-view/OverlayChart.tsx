@@ -1,3 +1,4 @@
+import { MagnifyingGlassPlus } from "@phosphor-icons/react";
 import { useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { fetchSeriesBundle, type SeriesBundle } from "../../../lib/api/series";
 import { alignLevels, computeRelationship } from "../../../lib/chart/relationship";
@@ -91,12 +92,7 @@ function ChartLegend({ entries }: { entries: LegendEntry[] }) {
   );
 }
 
-export type ChartView = "main" | "correlation";
-
 export interface OverlayChartProps {
-  /** Controlled view, so the page can react to it (e.g. hide the evidence sidebar to give the correlation chart more width). */
-  view?: ChartView;
-  onViewChange?: (view: ChartView) => void;
   /** Overridden mostly for tests/storybook-style use — defaults to the workspace's active ticker. */
   ticker?: string;
   /** Overridden mostly for tests/storybook-style use — defaults to the workspace's selected markets. */
@@ -119,14 +115,7 @@ export interface OverlayChartProps {
  * rolling correlation between SPY-adjusted stock returns and odds changes.
  * Components are thin; all math lives in lib/chart/relationship.ts.
  */
-export function OverlayChart({
-  ticker,
-  marketIds,
-  children,
-  className,
-  view: controlledView,
-  onViewChange,
-}: OverlayChartProps) {
+export function OverlayChart({ ticker, marketIds, children, className }: OverlayChartProps) {
   const { state } = useWorkspace();
   const themeCtx = useContext(ThemeContext);
   const mode = themeCtx?.mode ?? "light";
@@ -141,9 +130,7 @@ export function OverlayChart({
   // One chart view at a time: stacking all three made it hard to tell which
   // panel a line belonged to. "main" is price + odds on a shared time axis;
   // "correlation" is the rolling-correlation analysis.
-  const [localView, setLocalView] = useState<ChartView>("main");
-  const view = controlledView ?? localView;
-  const setView = onViewChange ?? setLocalView;
+  const [view, setView] = useState<"main" | "correlation">("main");
   const [fitOdds, setFitOdds] = useState(false);
 
   useEffect(() => {
@@ -265,37 +252,54 @@ export function OverlayChart({
             </p>
           ))}
           {stock && domain ? (
-            <div className="flex flex-1 flex-col gap-2 overflow-y-auto">
+            <div className={`flex flex-1 flex-col overflow-y-auto ${view === "main" ? "gap-0" : "gap-2"}`}>
               {view === "main" ? (
                 <>
                   <PricePanel
                     stock={stock}
                     domain={domain}
                     color="var(--text-primary)"
-                    height={markets.length > 0 ? 190 : 340}
+                    height={markets.length > 0 ? 350 : 450}
                   >
                     {children}
                   </PricePanel>
                   {markets.length > 0 && (
                     <>
-                      <div
-                        className="flex items-center justify-between px-1 text-xs"
-                        style={{ color: "var(--text-tertiary)" }}
-                      >
-                        <span className="font-medium uppercase tracking-wide">Odds</span>
-                        <label className="flex cursor-pointer items-center gap-1.5">
-                          <input type="checkbox" checked={fitOdds} onChange={(e) => setFitOdds(e.target.checked)} />
-                          Zoom to data
-                        </label>
+                      {/* No band between the panels: the label and zoom toggle float over the odds plot
+                          instead of sitting in a row of their own. */}
+                      <div className="relative">
+                        <OddsPanel
+                          markets={markets}
+                          domain={domain}
+                          colorById={colorById}
+                          showTimeAxis
+                          height={300}
+                          fit={fitOdds}
+                        />
+                        <span
+                          className="pointer-events-none absolute left-16 top-2 text-xs font-medium uppercase tracking-wide"
+                          style={{ color: "var(--text-tertiary)" }}
+                        >
+                          Odds
+                        </span>
+                        <div className="absolute right-4 top-2 z-10">
+                          <button
+                            type="button"
+                            onClick={() => setFitOdds((v) => !v)}
+                            aria-pressed={fitOdds}
+                            aria-label={fitOdds ? "Show the full 0-100% scale" : "Zoom the odds chart to the data"}
+                            title={fitOdds ? "Showing zoomed to data. Click for the full 0-100% scale" : "Zoom to data"}
+                            className="flex h-7 w-7 items-center justify-center rounded-[var(--radius-control)]"
+                            style={{
+                              color: fitOdds ? "var(--accent-contrast)" : "var(--text-secondary)",
+                              background: fitOdds ? "var(--accent)" : "transparent",
+                              border: "1px solid var(--border)",
+                            }}
+                          >
+                            <MagnifyingGlassPlus size={15} weight="bold" />
+                          </button>
+                        </div>
                       </div>
-                      <OddsPanel
-                        markets={markets}
-                        domain={domain}
-                        colorById={colorById}
-                        showTimeAxis
-                        height={320}
-                        fit={fitOdds}
-                      />
                     </>
                   )}
                 </>
@@ -307,7 +311,7 @@ export function OverlayChart({
                     selectedId={relationshipMarket?.id ?? null}
                     onSelect={setRelationshipPick}
                     domain={domain}
-                    chartHeight={300}
+                    chartHeight={510}
                     color={
                       relationshipMarket ? (colorById.get(relationshipMarket.id) ?? "var(--accent)") : "var(--accent)"
                     }

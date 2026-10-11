@@ -13,9 +13,6 @@ export default function AppLayout() {
           <Link to="/" className="font-semibold" style={{ color: "var(--text-primary)" }}>
             Financial Signals
           </Link>
-          <Link to="/company-graph" className="text-sm" style={{ color: "var(--text-secondary)" }}>
-            Company graph
-          </Link>
         </div>
         <div className="flex items-center gap-4">
           <ThemeSwitcher />

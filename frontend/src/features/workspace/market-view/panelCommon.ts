@@ -23,3 +23,11 @@ export function formatTick(t: number): string {
 export function formatTooltipDate(t: number): string {
   return new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
+
+/**
+ * Charts sharing this id share their hover: pointing at a moment in one panel
+ * draws the cursor and tooltip at that same moment in the other. "value" matches
+ * on the x value (epoch ms) rather than the data index, which is required here
+ * because the two panels have different numbers of points.
+ */
+export const TIME_SYNC = { syncId: "price-odds-time", syncMethod: "value" as const };

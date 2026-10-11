@@ -1,7 +1,7 @@
 export { WorkspaceTransition } from "./WorkspaceTransition";
 export type { WorkspaceTransitionProps } from "./WorkspaceTransition";
 export { OverlayChart } from "./OverlayChart";
-export type { ChartView, OverlayChartProps } from "./OverlayChart";
+export type { OverlayChartProps } from "./OverlayChart";
 
 export { AddEvidenceButtons } from "./AddEvidenceButtons";
 export { EvidenceSidebar } from "./EvidenceSidebar";
