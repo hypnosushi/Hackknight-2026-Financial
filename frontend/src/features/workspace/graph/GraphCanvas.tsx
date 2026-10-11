@@ -797,32 +797,29 @@ export function GraphCanvas() {
               : flashRef.current.get(String(node.id));
 
             if (flash) {
-              // ~1.2s pulse: a wide translucent ring that breathes, plus a solid
-              // rim, so it reads at any zoom and over any node color.
+              // Live move: a neutral breathing ring (~1.2s). No color on purpose: green and red on a
+              // node are reserved for news highlights, and a market's Yes direction is not a stock call.
               const phase =
                 (Math.sin((performance.now() / 1200) * 2 * Math.PI) + 1) / 2; // 0..1
-              const color = cssVar(
-                flash.direction === "yes_up"
-                  ? "--status-positive"
-                  : "--status-negative",
-                flash.direction === "yes_up" ? "#16a34a" : "#dc2626",
-              );
+              const ring = cssVar("--text-primary", "#111");
               ctx.beginPath();
               ctx.arc(x, y, r + 4 + phase * 8, 0, 2 * Math.PI);
-              ctx.fillStyle = color;
-              ctx.globalAlpha = 0.12 + phase * 0.25;
+              ctx.fillStyle = ring;
+              ctx.globalAlpha = 0.08 + phase * 0.18;
               ctx.fill();
               ctx.globalAlpha = 1;
               ctx.beginPath();
               ctx.arc(x, y, r + 2, 0, 2 * Math.PI);
-              ctx.lineWidth = 2;
-              ctx.strokeStyle = color;
+              ctx.lineWidth = 1.5;
+              ctx.strokeStyle = ring;
+              ctx.globalAlpha = 0.5 + phase * 0.5;
               ctx.stroke();
+              ctx.globalAlpha = 1;
             }
 
-            if (highlight && !flash) {
-              // A recent event pulses in its direction's status color, the same motion as a live
-              // move (a live move on the same node takes precedence: it is the newer signal).
+            if (highlight) {
+              // A recent news event pulses in its direction's status color. A live move on the same
+              // node adds its neutral ring on top; the two never compete for the color channel.
               const phase =
                 (Math.sin((performance.now() / 1600) * 2 * Math.PI) + 1) / 2;
               const color = cssVar(

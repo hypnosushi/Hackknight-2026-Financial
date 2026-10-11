@@ -151,34 +151,28 @@ export function GraphLegend({
           >
             Live move · last hour
           </span>
-          {(
-            [
-              ["--status-positive", "Yes price up"],
-              ["--status-negative", "Yes price down"],
-            ] as const
-          ).map(([token, label]) => (
-            <div key={token} className="flex items-center gap-2">
-              <span
-                className="h-2.5 w-2.5 shrink-0 rounded-full"
-                style={{
-                  background: `var(${token})`,
-                  boxShadow: `0 0 0 4px color-mix(in srgb, var(${token}) 30%, transparent)`,
-                }}
-              />
-              <span
-                className="text-xs"
-                style={{ color: "var(--text-secondary)" }}
-              >
-                {label}
-              </span>
-            </div>
-          ))}
+          <div className="flex items-center gap-2">
+            <span
+              className="h-2.5 w-2.5 shrink-0 rounded-full"
+              style={{
+                background: "var(--surface-elevated)",
+                border: "1.5px solid var(--text-primary)",
+                boxShadow:
+                  "0 0 0 4px color-mix(in srgb, var(--text-primary) 15%, transparent)",
+              }}
+            />
+            <span
+              className="text-xs"
+              style={{ color: "var(--text-secondary)" }}
+            >
+              Pulsing ring = a market it's exposed to moved sharply
+            </span>
+          </div>
           <span
             className="text-[10px]"
             style={{ color: "var(--text-tertiary)" }}
           >
-            Flashing = a market it's exposed to moved sharply (Yes price, not
-            the stock)
+            Direction is in the alerts list, not on the node
           </span>
         </>
       )}
