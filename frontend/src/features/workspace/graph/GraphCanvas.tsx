@@ -694,7 +694,10 @@ export function GraphCanvas() {
           onClose={() => setSelectedId(null)}
         />
       )}
-      <GraphLegend showBoardInterlock={hasPeople} ticker={state.ticker} />
+      {/* Bottom-left so it clears the hop slider and node card stacked at the top-left. */}
+      <div className="absolute bottom-6 left-6 z-10">
+        <GraphLegend showBoardInterlock={hasPeople} ticker={state.ticker} />
+      </div>
     </div>
   );
 }

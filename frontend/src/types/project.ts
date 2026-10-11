@@ -1,3 +1,4 @@
+import type { ChartRange } from "./market";
 import type { ContentItem } from "./content";
 import type { CompanyGraph } from "./workspaceGraph";
 
@@ -37,6 +38,7 @@ export interface WorkspaceState {
   suggestedMarkets: import("./market").MarketCard[];
   marketsStatus: AsyncStatus;
   selectedMarketIds: string[];
+  range: ChartRange;
   evidence: EvidenceAnnotation[];
   pinnedAnnotationId: string | null;
   queryResults: QueryResult[];
@@ -62,6 +64,8 @@ export interface ProjectInput {
   selectedMarketIds: string[];
   suggestedMarkets: import("./market").MarketCard[];
   evidence: EvidenceAnnotation[];
+  /** Optional so projects saved before the range selector still load (default "1m"). */
+  range?: ChartRange;
 }
 
 /** A persisted project as returned by the backend (backend/api/projects.py). */
@@ -81,6 +85,7 @@ export const initialWorkspaceState: WorkspaceState = {
   suggestedMarkets: [],
   marketsStatus: "idle",
   selectedMarketIds: [],
+  range: "1m",
   evidence: [],
   pinnedAnnotationId: null,
   queryResults: [],

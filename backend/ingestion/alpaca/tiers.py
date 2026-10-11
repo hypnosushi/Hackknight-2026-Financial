@@ -11,6 +11,7 @@ TIER_TIMEFRAME = {
     ZoomTier.DAILY: "5Min",
     ZoomTier.WEEKLY: "1Hour",
     ZoomTier.MONTHLY: "1Hour",
+    ZoomTier.QUARTERLY: "1Day",  # hourly over 90d would be ~600 bars; daily is plenty
     ZoomTier.ALL_TIME: "1Day",
 }
 
@@ -19,6 +20,7 @@ TIER_LOOKBACK = {
     ZoomTier.DAILY: timedelta(hours=24),
     ZoomTier.WEEKLY: timedelta(days=7),
     ZoomTier.MONTHLY: timedelta(days=30),
+    ZoomTier.QUARTERLY: timedelta(days=90),
 }
 
 # Free (IEX) feed's historical coverage starts here; All-time just uses it as `start`.

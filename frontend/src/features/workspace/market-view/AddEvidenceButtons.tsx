@@ -11,7 +11,7 @@ type PickerKind = "tweets" | "news";
 
 /**
  * Stage 7 — the two explicit "Add" actions. Each button opens a small popover
- * with a pick-to-add list sourced from the mocked evidence API, keyed off the
+ * with a pick-to-add list sourced from the evidence API (mock fallback), keyed off the
  * current workspace ticker. Nothing is auto-populated into state.evidence —
  * only an explicit click on a candidate (inside EvidencePickerList) adds it.
  */
@@ -23,6 +23,7 @@ export function AddEvidenceButtons() {
     news: [],
   });
   const [loadingKind, setLoadingKind] = useState<PickerKind | null>(null);
+  const [errorKind, setErrorKind] = useState<PickerKind | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -51,10 +52,17 @@ export function AddEvidenceButtons() {
     setOpenPicker(kind);
     if (itemsByKind[kind].length > 0) return; // already loaded this session
     setLoadingKind(kind);
+    setErrorKind(null);
     const ticker = state.ticker ?? "";
-    const items = kind === "tweets" ? await fetchCandidateTweets(ticker) : await fetchCandidateNews(ticker);
-    setItemsByKind((prev) => ({ ...prev, [kind]: items }));
-    setLoadingKind(null);
+    try {
+      const items = kind === "tweets" ? await fetchCandidateTweets(ticker) : await fetchCandidateNews(ticker);
+      setItemsByKind((prev) => ({ ...prev, [kind]: items }));
+    } catch {
+      // the fetchers already fall back to mocks; this is a last-resort guard
+      setErrorKind(kind);
+    } finally {
+      setLoadingKind(null);
+    }
   }
 
   function handleSelect(item: ContentItem) {
@@ -101,6 +109,8 @@ export function AddEvidenceButtons() {
             <EvidencePickerList
               items={itemsByKind[openPicker]}
               loading={loadingKind === openPicker}
+              error={errorKind === openPicker}
+              kind={openPicker}
               addedIds={addedIds}
               onSelect={handleSelect}
             />

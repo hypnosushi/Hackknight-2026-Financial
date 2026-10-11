@@ -33,6 +33,7 @@ export function SaveProjectButton() {
         selectedMarketIds: state.selectedMarketIds,
         suggestedMarkets: state.suggestedMarkets,
         evidence: state.evidence,
+        range: state.range,
       };
       const project = state.activeProjectId
         ? await updateProject(state.activeProjectId, input)

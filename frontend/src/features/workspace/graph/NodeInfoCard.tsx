@@ -73,10 +73,10 @@ export function NodeInfoCard({
   const title = isPerson ? node.label : (node.name ?? node.label);
 
   return (
-    // Below the hop slider; left-20 clears the collapsed projects rail.
+    // Below the hop slider. The canvas pane already starts past the projects rail.
     <section
       aria-label={`${title} details`}
-      className="absolute left-20 top-24 z-10 flex max-h-[45%] w-80 flex-col gap-3 overflow-y-auto px-4 py-3 shadow-lg"
+      className="absolute left-6 top-24 z-10 flex max-h-[45%] w-80 flex-col gap-3 overflow-y-auto px-4 py-3 shadow-lg"
       style={{
         background: "var(--surface)",
         border: "1px solid var(--border)",

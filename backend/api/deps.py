@@ -5,7 +5,11 @@ built once from .env rather than re-reading env vars on every request.
 import os
 from functools import lru_cache
 
+import httpx
+
 from backend.ingestion.alpaca import AlpacaApiGateway
+from backend.ingestion.kalshi.kalshi import REST_URL as KALSHI_REST_URL
+from backend.ingestion.news_api import NewsApiGateway
 from backend.ingestion.twitter_lookup import TwitterApiGateway
 
 
@@ -24,3 +28,18 @@ def get_twitter_gateway() -> TwitterApiGateway:
     if not token:
         raise RuntimeError("Set X_BEARER_TOKEN in .env")
     return TwitterApiGateway(bearer_token=token)
+
+
+@lru_cache
+def get_kalshi_client() -> httpx.Client:
+    # Kalshi's market-data GETs (candlesticks) are public, so no credentials
+    # are needed; the signed headers in kalshi.py are only for the WebSocket.
+    return httpx.Client(base_url=KALSHI_REST_URL, timeout=15)
+
+
+@lru_cache
+def get_news_gateway() -> NewsApiGateway | None:
+    # Returns None (not raises) when unconfigured: /evidence/news degrades to
+    # clearly-marked mock data so the UI still works without a NewsAPI key.
+    key = os.environ.get("NEWSAPI_KEY")
+    return NewsApiGateway(api_key=key) if key else None

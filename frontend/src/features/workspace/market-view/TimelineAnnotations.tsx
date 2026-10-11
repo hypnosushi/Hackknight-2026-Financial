@@ -1,85 +1,108 @@
-import { motion } from "motion/react";
+import { ReferenceLine } from "recharts";
+import type { EvidenceAnnotation } from "../../../types/project";
 import { useWorkspace } from "../useWorkspace";
 
-/**
- * Stage 8 — dotted vertical markers, one per `state.evidence` item, positioned
- * along a shared time domain.
- *
- * Integration note: at the time this was built, OverlayChart.tsx (the chart
- * this is meant to sit on top of) didn't exist yet / had no settled extension
- * point, so this is a **self-contained, absolutely-positioned overlay**: drop
- * it inside the same `position: relative` wrapper that hosts the chart, sized
- * to match the chart's plot area (not the whole card — exclude axis margins),
- * and it will lay out its own markers with `position: absolute; inset: 0`.
- * Whoever wires this into OverlayChart should pass the chart's actual x-domain
- * (the earliest/latest timestamp currently plotted) as `domainStart`/`domainEnd`
- * rather than this component inferring or hardcoding one.
- */
-export function TimelineAnnotations({
-  domainStart,
-  domainEnd,
-  className,
-}: {
-  /** The chart's x-axis time domain — same range the plotted series covers. */
-  domainStart: Date | string | number;
-  domainEnd: Date | string | number;
-  className?: string;
-}) {
-  const { state, dispatch } = useWorkspace();
+interface MarkerShapeProps {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
 
-  const start = new Date(domainStart).getTime();
-  const end = new Date(domainEnd).getTime();
-  const span = end - start;
+function EvidenceMarker({
+  annotation,
+  isPinned,
+  onPin,
+  line,
+}: {
+  annotation: EvidenceAnnotation;
+  isPinned: boolean;
+  onPin: () => void;
+  line: MarkerShapeProps;
+}) {
+  const kind = annotation.item.source === "twitter" ? "tweet" : "news";
+  const color = isPinned ? "var(--accent)" : "var(--text-tertiary)";
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onPin();
+    }
+  };
 
   return (
-    <div
-      className={`pointer-events-none absolute inset-0 ${className ?? ""}`}
-      aria-hidden={state.evidence.length === 0}
-    >
-      {state.evidence.map((annotation) => {
-        const t = new Date(annotation.timestamp).getTime();
-        if (span <= 0 || Number.isNaN(t)) return null;
-        const pct = Math.min(1, Math.max(0, (t - start) / span)) * 100;
-        const isPinned = state.pinnedAnnotationId === annotation.id;
-        const isTweet = annotation.item.source === "twitter";
+    <g>
+      <line
+        x1={line.x1}
+        y1={line.y1}
+        x2={line.x2}
+        y2={line.y2}
+        stroke={color}
+        strokeWidth={2}
+        strokeDasharray="2 4"
+        strokeLinecap="round"
+        opacity={isPinned ? 1 : 0.55}
+      />
+      {/* click target + dot at the top of the line; r=10 keeps a comfortable hit area */}
+      <g
+        role="button"
+        tabIndex={0}
+        aria-label={`View ${kind} evidence: ${annotation.item.title}`}
+        onClick={onPin}
+        onKeyDown={onKeyDown}
+        style={{ cursor: "pointer", outline: "none" }}
+      >
+        <title>{annotation.item.title}</title>
+        <circle cx={line.x1} cy={line.y1} r={10} fill="transparent" />
+        <circle
+          cx={line.x1}
+          cy={line.y1}
+          r={8}
+          fill={isPinned ? "var(--accent)" : "var(--surface-elevated)"}
+          stroke={color}
+          strokeWidth={2}
+        />
+        <circle cx={line.x1} cy={line.y1} r={3} fill={isPinned ? "var(--accent-contrast)" : "var(--text-tertiary)"} />
+      </g>
+    </g>
+  );
+}
 
+/**
+ * Evidence markers as recharts <ReferenceLine>s, so they share the chart's own
+ * x scale (no hand-measured overlay insets). Must render inside the chart.
+ * Requires a numeric time XAxis: `x` is the evidence's epoch ms, no snapping
+ * to the data grid needed. Items outside `domain` are dropped.
+ */
+export function TimelineAnnotations({ domain }: { domain: [number, number] }) {
+  const { state, dispatch } = useWorkspace();
+  const [start, end] = domain;
+
+  const visible = state.evidence
+    .map((annotation) => ({ annotation, t: Date.parse(annotation.timestamp) }))
+    .filter(({ t }) => Number.isFinite(t) && t >= start && t <= end)
+    // Pinned last so its marker paints on top of its neighbours.
+    .sort((a, b) => Number(a.annotation.id === state.pinnedAnnotationId) - Number(b.annotation.id === state.pinnedAnnotationId));
+
+  return (
+    <>
+      {visible.map(({ annotation, t }) => {
+        const isPinned = state.pinnedAnnotationId === annotation.id;
         return (
-          <div
+          <ReferenceLine
             key={annotation.id}
-            className="pointer-events-auto absolute top-0 h-full -translate-x-1/2"
-            style={{ left: `${pct}%` }}
-          >
-            {/* dotted vertical line, draws in top-to-bottom */}
-            <motion.div
-              initial={{ scaleY: 0 }}
-              animate={{ scaleY: 1 }}
-              transition={{ duration: 0.4, ease: "easeOut" }}
-              className="absolute top-0 h-full w-px origin-top border-l-2 border-dotted"
-              style={{
-                borderColor: isPinned ? "var(--accent)" : "var(--text-tertiary)",
-                opacity: isPinned ? 1 : 0.55,
-              }}
-            />
-            {/* click target + marker dot, sits at the top of the line */}
-            <button
-              type="button"
-              onClick={() => dispatch({ type: "EVIDENCE_PINNED", annotationId: annotation.id })}
-              aria-label={`View ${isTweet ? "tweet" : "news"} evidence: ${annotation.item.title}`}
-              title={annotation.item.title}
-              className="absolute -top-1.5 left-1/2 flex h-5 w-5 -translate-x-1/2 items-center justify-center rounded-full border-2 transition hover:scale-110"
-              style={{
-                background: isPinned ? "var(--accent)" : "var(--surface-elevated)",
-                borderColor: isPinned ? "var(--accent)" : "var(--text-tertiary)",
-              }}
-            >
-              <span
-                className="h-1.5 w-1.5 rounded-full"
-                style={{ background: isPinned ? "var(--accent-contrast)" : "var(--text-tertiary)" }}
+            x={t}
+            ifOverflow="hidden"
+            shape={(line: MarkerShapeProps) => (
+              <EvidenceMarker
+                annotation={annotation}
+                isPinned={isPinned}
+                line={line}
+                onPin={() => dispatch({ type: "EVIDENCE_PINNED", annotationId: annotation.id })}
               />
-            </button>
-          </div>
+            )}
+          />
         );
       })}
-    </div>
+    </>
   );
 }

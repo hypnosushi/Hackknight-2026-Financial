@@ -33,3 +33,9 @@ def test_all_time_tier_starts_at_feed_coverage_start():
     assert start == ALL_TIME_START
     assert end == NOW
     assert tier_timeframe(ZoomTier.ALL_TIME) == "1Day"
+
+
+def test_quarterly_is_90_days_of_daily_bars():
+    start, end = tier_range(ZoomTier.QUARTERLY, NOW)
+    assert end - start == timedelta(days=90)
+    assert tier_timeframe(ZoomTier.QUARTERLY) == "1Day"

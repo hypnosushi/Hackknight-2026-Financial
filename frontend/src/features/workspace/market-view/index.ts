@@ -6,6 +6,7 @@ export type { OverlayChartProps } from "./OverlayChart";
 export { AddEvidenceButtons } from "./AddEvidenceButtons";
 export { EvidencePickerList } from "./EvidencePickerList";
 export { TimelineAnnotations } from "./TimelineAnnotations";
+export { RangeSelector } from "./RangeSelector";
 export { EvidenceDrawer } from "./EvidenceDrawer";
 export { NewsEvidenceCard } from "./NewsEvidenceCard";
 export { TweetEvidenceCard } from "./TweetEvidenceCard";

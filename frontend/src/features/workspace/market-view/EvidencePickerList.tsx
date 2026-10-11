@@ -11,11 +11,15 @@ import type { ContentItem } from "../../../types/content";
 export function EvidencePickerList({
   items,
   loading,
+  error = false,
+  kind,
   addedIds,
   onSelect,
 }: {
   items: ContentItem[];
   loading: boolean;
+  error?: boolean;
+  kind: "tweets" | "news";
   /** ids already added to state.evidence, so already-added candidates render as checked/disabled. */
   addedIds: Set<string>;
   onSelect: (item: ContentItem) => void;
@@ -34,10 +38,18 @@ export function EvidencePickerList({
     );
   }
 
+  if (error) {
+    return (
+      <p className="p-4 text-sm" style={{ color: "var(--text-tertiary)" }}>
+        Couldn't load {kind}. Close and reopen to try again.
+      </p>
+    );
+  }
+
   if (items.length === 0) {
     return (
       <p className="p-4 text-sm" style={{ color: "var(--text-tertiary)" }}>
-        No candidates found.
+        {kind === "news" ? "No news found for this ticker older than 30 days." : `No ${kind} found for this ticker in the last 30 days.`}
       </p>
     );
   }

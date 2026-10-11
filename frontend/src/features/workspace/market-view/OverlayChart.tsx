@@ -4,6 +4,8 @@ import { fetchNormalizedSeries } from "../../../lib/api/series";
 import type { NormalizedSeries } from "../../../types/market";
 import { ThemeContext } from "../../theme/ThemeProvider";
 import { useWorkspace } from "../useWorkspace";
+import { RangeSelector } from "./RangeSelector";
+import { TimelineAnnotations } from "./TimelineAnnotations";
 
 /**
  * Categorical "series identity" palette — intentionally separate from both
@@ -27,9 +29,10 @@ function seriesColor(marketIndex: number, mode: "light" | "dark"): string {
   return mode === "dark" ? step.dark : step.light;
 }
 
+/** One row per grid timestamp: `t`, then `<seriesId>` (normalized) and `<seriesId>__raw` per series. */
 interface ChartRow {
-  timestamp: string;
-  [seriesKey: string]: string | number | undefined;
+  t: number;
+  [seriesKey: string]: number | undefined;
 }
 
 function formatRaw(series: NormalizedSeries, rawValue: number): string {
@@ -39,22 +42,25 @@ function formatRaw(series: NormalizedSeries, rawValue: number): string {
   return `${rawValue.toFixed(1)}%`;
 }
 
-function formatTick(timestamp: string): string {
-  const d = new Date(timestamp);
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+/** Stocks move in %, odds in percentage points — label each honestly. */
+function formatChange(series: NormalizedSeries, value: number): string {
+  const sign = value >= 0 ? "+" : "";
+  return `${sign}${value.toFixed(1)}${series.unit === "usd" ? "%" : " pts"}`;
 }
 
-function formatTooltipDate(timestamp: string): string {
-  const d = new Date(timestamp);
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+function formatTick(t: number): string {
+  return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function formatTooltipDate(t: number): string {
+  return new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 /** Skeleton shaped like the eventual chart area — axes + a faint wandering line — not a spinner. */
 function ChartSkeleton() {
   return (
     <div
-      className="flex h-full w-full flex-col gap-3 rounded-[var(--radius-panel)] p-4"
-      style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+      className="flex h-full min-h-[280px] w-full flex-col gap-3"
       role="status"
       aria-label="Loading comparison chart"
     >
@@ -121,13 +127,13 @@ interface OverlayTooltipEntry {
 interface OverlayTooltipProps {
   active?: boolean;
   payload?: OverlayTooltipEntry[];
-  label?: string | number;
+  label?: number | string;
   seriesById: Map<string, NormalizedSeries>;
 }
 
 function OverlayTooltip({ active, payload, label, seriesById }: OverlayTooltipProps) {
   if (!active || !payload || payload.length === 0) return null;
-  const timestamp = typeof label === "string" ? label : String(label ?? "");
+  const t = Number(label);
 
   return (
     <div
@@ -135,7 +141,7 @@ function OverlayTooltip({ active, payload, label, seriesById }: OverlayTooltipPr
       style={{ background: "var(--surface-elevated)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
     >
       <div className="mb-1 font-medium" style={{ color: "var(--text-tertiary)" }}>
-        {formatTooltipDate(timestamp)}
+        {formatTooltipDate(t)}
       </div>
       <dl className="flex flex-col gap-1">
         {payload.map((entry) => {
@@ -150,7 +156,7 @@ function OverlayTooltip({ active, payload, label, seriesById }: OverlayTooltipPr
                 {series.label}
               </dt>
               <dd className="font-mono text-xs" style={{ color: "var(--text-secondary)" }}>
-                {typeof entry.value === "number" ? `${entry.value >= 0 ? "+" : ""}${entry.value.toFixed(1)}%` : "—"}
+                {typeof entry.value === "number" ? formatChange(series, entry.value) : "—"}
                 {typeof raw === "number" ? ` (${formatRaw(series, raw)})` : ""}
               </dd>
             </div>
@@ -171,7 +177,8 @@ export interface OverlayChartProps {
    * (Stage 7-8, built elsewhere) without this chart becoming a sealed box.
    * Children are rendered as additional children of recharts' <LineChart>,
    * so a caller can drop in <ReferenceLine>/<ReferenceDot> etc. positioned
-   * against this chart's own x/y scale.
+   * against this chart's own x/y scale (x is epoch ms). Evidence markers
+   * are already rendered by the chart itself.
    */
   children?: ReactNode;
   className?: string;
@@ -179,7 +186,7 @@ export interface OverlayChartProps {
 
 /**
  * Stage 6 core — normalized multi-series overlay chart. Single shared y-axis
- * (% change from the start of the visible window); the stock line stays the
+ * (change from the start of the visible window: stock %, market odds in points); the stock line stays the
  * neutral "ground truth" color, each market gets a stable hue from the
  * categorical series palette above. Real units surface in the tooltip only.
  */
@@ -190,6 +197,7 @@ export function OverlayChart({ ticker, marketIds, children, className }: Overlay
 
   const effectiveTicker = ticker ?? state.ticker ?? "";
   const effectiveMarketIds = marketIds ?? state.selectedMarketIds;
+  const range = state.range;
 
   const [series, setSeries] = useState<NormalizedSeries[] | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "error" | "done">("idle");
@@ -202,7 +210,12 @@ export function OverlayChart({ ticker, marketIds, children, className }: Overlay
     }
     let cancelled = false;
     setStatus("loading");
-    fetchNormalizedSeries(effectiveTicker, effectiveMarketIds)
+    fetchNormalizedSeries(
+      effectiveTicker,
+      effectiveMarketIds,
+      range,
+      Object.fromEntries(state.suggestedMarkets.map((m) => [m.marketId, m.title])),
+    )
       .then((result) => {
         if (cancelled) return;
         setSeries(result);
@@ -217,25 +230,28 @@ export function OverlayChart({ ticker, marketIds, children, className }: Overlay
     };
     // effectiveMarketIds is derived fresh each render from an array dep — stringify to avoid refetch loops.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveTicker, JSON.stringify(effectiveMarketIds)]);
+  }, [effectiveTicker, JSON.stringify(effectiveMarketIds), range]);
 
   const seriesById = useMemo(() => new Map((series ?? []).map((s) => [s.id, s])), [series]);
 
+  // Series share one time grid (see lib/chart/align.ts), so rows can be keyed by timestamp.
   const chartData = useMemo<ChartRow[]>(() => {
-    if (!series || series.length === 0) return [];
-    const length = Math.max(...series.map((s) => s.points.length));
-    return Array.from({ length }, (_, i) => {
-      const row: ChartRow = { timestamp: series[0]?.points[i]?.timestamp ?? "" };
-      for (const s of series) {
-        const point = s.points[i];
-        if (!point) continue;
-        row[s.id] = point.value;
-        row[`${s.id}__raw`] = point.rawValue;
-        if (!row.timestamp) row.timestamp = point.timestamp;
+    const rows = new Map<number, ChartRow>();
+    for (const s of series ?? []) {
+      for (const p of s.points) {
+        const row = rows.get(p.t) ?? { t: p.t };
+        row[s.id] = p.value;
+        row[`${s.id}__raw`] = p.rawValue;
+        rows.set(p.t, row);
       }
-      return row;
-    });
+    }
+    return [...rows.values()].sort((a, b) => a.t - b.t);
   }, [series]);
+
+  const domain = useMemo<[number, number] | null>(
+    () => (chartData.length > 0 ? [chartData[0].t, chartData[chartData.length - 1].t] : null),
+    [chartData],
+  );
 
   const legendEntries = useMemo<LegendEntry[]>(() => {
     if (!series) return [];
@@ -256,80 +272,86 @@ export function OverlayChart({ ticker, marketIds, children, className }: Overlay
     return map;
   }, [legendEntries]);
 
-  if (status === "loading" || status === "idle") {
-    return (
-      <div className={className ?? "h-full min-h-[360px] w-full"}>
-        <ChartSkeleton />
-      </div>
-    );
-  }
+  const emptySeries = (series ?? []).filter((s) => s.points.length === 0);
+  const shellClass = className ?? "flex h-full min-h-[360px] w-full flex-col gap-3 rounded-[var(--radius-panel)] p-4";
+  const shellStyle = { background: "var(--surface)", border: "1px solid var(--border)" };
 
-  if (status === "error" || !series) {
-    return (
-      <div
-        className={className ?? "flex h-full min-h-[360px] w-full items-center justify-center rounded-[var(--radius-panel)]"}
-        style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}
-      >
-        Couldn't load the comparison chart. Try again.
-      </div>
-    );
-  }
-
+  // The header (incl. range selector) stays mounted while loading so changing range doesn't flicker it away.
   return (
-    <div
-      className={className ?? "flex h-full min-h-[360px] w-full flex-col gap-3 rounded-[var(--radius-panel)] p-4"}
-      style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
-    >
-      <div className="flex items-center justify-between gap-4">
+    <div className={shellClass} style={shellStyle}>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <h3 className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-          Normalized comparison — % change from window start
+          Change since window start
         </h3>
-        <ChartLegend entries={legendEntries} />
+        <RangeSelector />
       </div>
-      <div className="flex-1">
-        <ResponsiveContainer width="100%" height="100%" minHeight={280}>
-          <LineChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
-            <CartesianGrid stroke="var(--border)" vertical={false} />
-            <XAxis
-              dataKey="timestamp"
-              tickFormatter={formatTick}
-              stroke="var(--text-tertiary)"
-              tick={{ fill: "var(--text-tertiary)", fontSize: 12 }}
-              axisLine={{ stroke: "var(--border)" }}
-              tickLine={false}
-            />
-            <YAxis
-              tickFormatter={(v: number) => `${v > 0 ? "+" : ""}${v}%`}
-              stroke="var(--text-tertiary)"
-              tick={{ fill: "var(--text-tertiary)", fontSize: 12 }}
-              axisLine={false}
-              tickLine={false}
-              label={{
-                value: "% change (shared axis)",
-                angle: -90,
-                position: "insideLeft",
-                fill: "var(--text-tertiary)",
-                fontSize: 12,
-              }}
-            />
-            <Tooltip content={<OverlayTooltip seriesById={seriesById} />} />
-            {series.map((s) => (
-              <Line
-                key={s.id}
-                type="monotone"
-                dataKey={s.id}
-                name={s.label}
-                stroke={colorById.get(s.id) ?? "var(--text-primary)"}
-                strokeWidth={s.kind === "stock" ? 2.5 : 2}
-                dot={false}
-                isAnimationActive={false}
-                connectNulls
-              />
-            ))}
-            {children}
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
+      {status === "loading" || status === "idle" ? (
+        <ChartSkeleton />
+      ) : status === "error" || !series ? (
+        <div className="flex flex-1 items-center justify-center" style={{ color: "var(--text-secondary)" }}>
+          Couldn't load the comparison chart. Try again.
+        </div>
+      ) : (
+        <>
+          <ChartLegend entries={legendEntries} />
+          {emptySeries.map((s) => (
+            <p key={s.id} className="px-1 text-xs" style={{ color: "var(--text-tertiary)" }}>
+              {s.label}: {s.kind === "market" ? "No trades in this window" : "No data in this window"}
+            </p>
+          ))}
+          <div className="flex-1">
+            <ResponsiveContainer width="100%" height="100%" minHeight={280}>
+              <LineChart data={chartData} margin={{ top: 12, right: 16, left: 0, bottom: 0 }}>
+                <CartesianGrid stroke="var(--border)" vertical={false} />
+                {/* Numeric time axis: points sit at their real time (irregular spacing is honest),
+                    and evidence markers can use raw epoch ms with no snapping to a category. */}
+                <XAxis
+                  dataKey="t"
+                  type="number"
+                  scale="time"
+                  domain={["dataMin", "dataMax"]}
+                  tickFormatter={formatTick}
+                  stroke="var(--text-tertiary)"
+                  tick={{ fill: "var(--text-tertiary)", fontSize: 12 }}
+                  axisLine={{ stroke: "var(--border)" }}
+                  tickLine={false}
+                />
+                <YAxis
+                  tickFormatter={(v: number) => `${v > 0 ? "+" : ""}${v}`}
+                  stroke="var(--text-tertiary)"
+                  tick={{ fill: "var(--text-tertiary)", fontSize: 12 }}
+                  axisLine={false}
+                  tickLine={false}
+                  label={{
+                    value: "change (stock %, odds pts)",
+                    angle: -90,
+                    position: "insideLeft",
+                    fill: "var(--text-tertiary)",
+                    fontSize: 12,
+                  }}
+                />
+                <Tooltip content={<OverlayTooltip seriesById={seriesById} />} />
+                {series.map((s) => (
+                  <Line
+                    key={s.id}
+                    // Step for odds (they hold the last trade, never ramp); linear for stock closes.
+                    type={s.kind === "market" ? "stepAfter" : "linear"}
+                    dataKey={s.id}
+                    name={s.label}
+                    stroke={colorById.get(s.id) ?? "var(--text-primary)"}
+                    strokeWidth={s.kind === "stock" ? 2.5 : 2}
+                    dot={false}
+                    isAnimationActive={false}
+                    connectNulls
+                  />
+                ))}
+                {domain && <TimelineAnnotations domain={domain} />}
+                {children}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
-from backend.api import entities, projects, stocks, twitter  # noqa: E402 (after load_dotenv, deps read env vars)
+from backend.api import classification, entities, evidence, markets, projects, stocks, twitter  # noqa: E402 (after load_dotenv, deps read env vars)
 from company_graph import api as company_graph_api  # noqa: E402
 
 # The Vite dev server (frontend/, port 5173) calls this API on port 8000, a different origin.
@@ -18,7 +18,10 @@ app = FastAPI(title="Hack Knight 2026 — Financial Signals API")
 
 app.add_middleware(CORSMiddleware, allow_origins=FRONTEND_ORIGINS, allow_methods=["GET", "POST", "PUT"], allow_headers=["*"])
 
+app.include_router(classification.router)
 app.include_router(entities.router)
+app.include_router(evidence.router)
+app.include_router(markets.router)
 app.include_router(projects.router)
 app.include_router(stocks.router)
 app.include_router(twitter.router)

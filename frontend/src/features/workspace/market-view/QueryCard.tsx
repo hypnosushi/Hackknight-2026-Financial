@@ -1,6 +1,7 @@
-import { MagicWand } from "@phosphor-icons/react";
+import { Gauge, MagicWand } from "@phosphor-icons/react";
 import { useState } from "react";
-import { runEvidenceQuery } from "../../../lib/api/classification";
+import { ApiError } from "../../../lib/apiClient";
+import { MAX_ITEMS, runEvidenceQuery, type QueryMode } from "../../../lib/api/classification";
 import type { QueryResult } from "../../../types/project";
 import { useWorkspace } from "../useWorkspace";
 
@@ -13,29 +14,38 @@ export function QueryCard() {
   const { state, dispatch } = useWorkspace();
   const [query, setQuery] = useState("");
   const [isRunning, setIsRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [capped, setCapped] = useState(false);
 
   const hasEvidence = state.evidence.length > 0;
 
-  async function handleRun() {
+  async function run(mode: QueryMode) {
     const trimmed = query.trim();
-    if (!trimmed || !hasEvidence || isRunning) return;
+    if (!hasEvidence || isRunning || (mode === "boolean" && !trimmed)) return;
 
     setIsRunning(true);
+    setError(null);
+    setCapped(false);
     try {
-      const { percentage, n, label } = await runEvidenceQuery(
+      const { percentage, n, label, capped } = await runEvidenceQuery(
         state.evidence.map((e) => e.item),
-        trimmed,
+        mode === "boolean" ? trimmed : null,
+        mode,
       );
       const result: QueryResult = {
         id: `query-${Date.now()}`,
-        query: trimmed,
+        query: mode === "boolean" ? trimmed : "Sentiment",
         label,
         percentage,
         n,
         createdAt: new Date().toISOString(),
       };
       dispatch({ type: "QUERY_RESULT_ADDED", result });
-      setQuery("");
+      setCapped(capped);
+      if (mode === "boolean") setQuery("");
+    } catch (e) {
+      // only 4xx reaches here (runEvidenceQuery mocks over network/5xx failures)
+      setError(e instanceof ApiError ? e.message : "Query failed. Try again.");
     } finally {
       setIsRunning(false);
     }
@@ -56,7 +66,7 @@ export function QueryCard() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") handleRun();
+            if (e.key === "Enter") run("boolean");
           }}
           placeholder='e.g. "what % of these are positive sentiment"'
           disabled={!hasEvidence}
@@ -69,7 +79,7 @@ export function QueryCard() {
         />
         <button
           type="button"
-          onClick={handleRun}
+          onClick={() => run("boolean")}
           disabled={!query.trim() || !hasEvidence || isRunning}
           className="flex items-center gap-1.5 rounded-[var(--radius-control)] px-3 py-2 text-sm font-medium transition disabled:opacity-50"
           style={{ background: "var(--accent)", color: "var(--accent-contrast)" }}
@@ -78,6 +88,36 @@ export function QueryCard() {
           {isRunning ? "Running…" : "Run"}
         </button>
       </div>
+
+      <div className="mt-2 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => run("sentiment")}
+          disabled={!hasEvidence || isRunning}
+          className="flex items-center gap-1.5 rounded-[var(--radius-control)] border px-3 py-1.5 text-xs font-medium transition disabled:opacity-50"
+          style={{ borderColor: "var(--border)", color: "var(--text-primary)" }}
+        >
+          <Gauge size={13} weight="bold" />
+          Sentiment
+        </button>
+        {isRunning && (
+          <span className="text-xs" style={{ color: "var(--text-tertiary)" }} role="status">
+            Classifying {Math.min(state.evidence.length, MAX_ITEMS)} items — this can take a while…
+          </span>
+        )}
+      </div>
+
+      {error && (
+        <p className="mt-2 text-xs" style={{ color: "var(--status-negative)" }} role="alert">
+          {error}
+        </p>
+      )}
+
+      {capped && (
+        <p className="mt-2 text-xs" style={{ color: "var(--text-tertiary)" }}>
+          Only the newest {MAX_ITEMS} items were classified.
+        </p>
+      )}
 
       {!hasEvidence && (
         <p className="mt-2 text-xs" style={{ color: "var(--text-tertiary)" }}>

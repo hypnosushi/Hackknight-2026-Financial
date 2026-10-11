@@ -1,6 +1,6 @@
 import type { GraphStatus } from "../../types/graph";
 import { normalizeGraph, type CompanyGraph } from "../../types/workspaceGraph";
-import type { MarketCard } from "../../types/market";
+import type { ChartRange, MarketCard } from "../../types/market";
 import type { AsyncStatus, EvidenceAnnotation, Project, QueryResult, WorkspaceState } from "../../types/project";
 import { initialWorkspaceState } from "../../types/project";
 
@@ -17,6 +17,7 @@ export type WorkspaceAction =
   | { type: "MARKETS_LOADED"; markets: MarketCard[] }
   | { type: "MARKET_TOGGLED"; marketId: string }
   | { type: "MARKET_ADDED"; market: MarketCard }
+  | { type: "RANGE_CHANGED"; range: ChartRange }
   | { type: "GENERATE_PRESSED" } // Stage 5 — slide transition into market-view
   | { type: "EVIDENCE_ADDED"; annotation: EvidenceAnnotation }
   | { type: "EVIDENCE_PINNED"; annotationId: string | null }
@@ -99,6 +100,9 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           : [...state.selectedMarketIds, action.market.marketId],
       };
 
+    case "RANGE_CHANGED":
+      return { ...state, range: action.range };
+
     case "GENERATE_PRESSED":
       return { ...state, stage: "market-view" };
 
@@ -133,6 +137,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         suggestedMarkets: action.project.suggestedMarkets,
         marketsStatus: "done",
         selectedMarketIds: action.project.selectedMarketIds,
+        range: action.project.range ?? "1m",
         evidence: action.project.evidence,
         activeProjectId: action.project.id,
         activeProjectName: action.project.name,

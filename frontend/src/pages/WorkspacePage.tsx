@@ -1,87 +1,39 @@
-import { useMemo } from "react";
 import { WorkspaceProvider } from "../features/workspace/WorkspaceProvider";
-import { useWorkspace } from "../features/workspace/useWorkspace";
 import { TickerInput, GraphCanvas } from "../features/workspace/graph";
-import { TagGenerationStep } from "../features/workspace/tagging";
-import { MarketCardGrid, MarketSearchInput, GenerateButton } from "../features/workspace/markets";
+import { PredictionMarketPanel } from "../features/workspace/graph/PredictionMarketPanel";
+import { useWorkspace } from "../features/workspace/useWorkspace";
 import {
   WorkspaceTransition,
   OverlayChart,
   AddEvidenceButtons,
-  TimelineAnnotations,
   EvidenceDrawer,
   QueryCard,
 } from "../features/workspace/market-view";
 import { ProjectSidebar, SaveProjectButton } from "../features/workspace/projects";
 
-// Mock data in lib/api/series.ts always generates a trailing 30-day daily
-// window ending "now" — see note on ComparisonPanel below for why this is
-// hardcoded rather than read off the chart's actual fetched series.
-const MOCK_SERIES_WINDOW_DAYS = 30;
-
 /**
- * The graph canvas fills the entire pane (not just a top slice) so the
- * pinned center node is centered against the whole screen, not a cropped
- * fraction of it. Once tags/markets are ready, that step renders as a
- * floating panel docked to the bottom edge, on *top* of the canvas, rather
- * than pushing/shrinking it — the canvas's measured size (and so the
- * center node's position) stays the full pane regardless of stage.
+ * Left to right: the projects rail's resting width (`left-14`), the graph,
+ * then the prediction-market sidebar. The graph's pane is the space *between*
+ * the rail and the sidebar, so the pinned center node and ticker input center
+ * on that space and nothing is drawn under either. The sidebar only exists once
+ * a search has started; before that the ticker prompt centers on the full
+ * width. (The rail still overlays the graph when it expands on hover; that's a
+ * temporary preview.)
  */
-function GraphAndPickerColumn() {
+function GraphColumn() {
   const { state } = useWorkspace();
-  const showPicker = state.stage !== "empty" && state.stage !== "building-graph";
-
   return (
     <div className="relative h-full w-full">
-      <TickerInput />
-      <GraphCanvas />
-      {showPicker && (
-        <div
-          className="absolute inset-x-0 bottom-0 z-20 max-h-[42%] overflow-y-auto border-t py-6 pl-20 pr-6"
-          style={{ borderColor: "var(--border)", background: "var(--surface)" }}
-        >
-          {/* pl-20 (not p-6 on all sides) clears the collapsed projects
-              rail, which overlays the canvas at a higher z-index — without
-              it, this panel's leading text/content sits underneath the
-              rail near the pane's left edge. */}
-          <div className="flex flex-col gap-5">
-            <TagGenerationStep />
-            {state.tagsStatus === "done" && (
-              <>
-                <MarketSearchInput />
-                <MarketCardGrid />
-                <GenerateButton />
-              </>
-            )}
-          </div>
+      <div className="absolute inset-y-0 left-14 right-0 flex">
+        <div className="relative min-w-0 flex-1">
+          <TickerInput />
+          <GraphCanvas />
         </div>
-      )}
-    </div>
-  );
-}
-
-/**
- * Hosts OverlayChart + the Stage 8 timeline markers together. TimelineAnnotations
- * was built as a self-contained absolutely-positioned overlay (see its own file
- * comment) sized to the chart's *plot area*, not the whole card — recharts
- * reserves variable left/bottom space for axis labels that isn't known until
- * render, so the inset below is a close approximation (matches OverlayChart's
- * fixed heading row + axis margins) rather than a pixel-exact measurement.
- * Good enough for the mocked-data demo; revisit with a ResizeObserver/ref-based
- * measurement if real data makes the mismatch visible.
- */
-function ComparisonPanel() {
-  const domainEnd = useMemo(() => new Date(), []);
-  const domainStart = useMemo(
-    () => new Date(domainEnd.getTime() - MOCK_SERIES_WINDOW_DAYS * 86_400_000),
-    [domainEnd],
-  );
-
-  return (
-    <div className="relative">
-      <OverlayChart />
-      <div className="pointer-events-none absolute inset-x-4 bottom-0 top-[52px] max-sm:inset-x-2">
-        <TimelineAnnotations domainStart={domainStart} domainEnd={domainEnd} />
+        {state.stage !== "empty" && (
+          <aside className="h-full w-80 shrink-0">
+            <PredictionMarketPanel ticker={state.ticker} />
+          </aside>
+        )}
       </div>
     </div>
   );
@@ -99,7 +51,7 @@ function MarketViewColumn() {
         </h2>
         <SaveProjectButton />
       </div>
-      <ComparisonPanel />
+      <OverlayChart />
       <AddEvidenceButtons />
       <QueryCard />
     </div>
@@ -116,7 +68,7 @@ export function WorkspaceShell() {
     <div className="relative h-full w-full">
       <WorkspaceTransition
         className="relative h-full w-full overflow-hidden"
-        graphView={<GraphAndPickerColumn />}
+        graphView={<GraphColumn />}
         marketView={<MarketViewColumn />}
       />
       <ProjectSidebar />

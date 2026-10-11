@@ -15,6 +15,7 @@ class ZoomTier(str, Enum):
     DAILY = "daily"
     WEEKLY = "weekly"
     MONTHLY = "monthly"
+    QUARTERLY = "quarterly"
     ALL_TIME = "all_time"
 
 

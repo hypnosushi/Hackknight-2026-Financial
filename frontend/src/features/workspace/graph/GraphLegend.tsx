@@ -81,7 +81,7 @@ export function GraphLegend({
 
   return (
     <div
-      className="absolute right-6 top-6 z-10 flex flex-col gap-2 px-4 py-3"
+      className="flex flex-col gap-2 px-4 py-3"
       style={{
         background: "var(--surface)",
         border: "1px solid var(--border)",

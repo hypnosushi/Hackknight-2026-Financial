@@ -9,7 +9,7 @@ export function HopFilter({ value, onChange }: { value: number; onChange: (hops:
   return (
     // left-20 clears the collapsed projects rail, which overlays the canvas.
     <label
-      className="absolute left-20 top-6 z-10 flex items-center gap-3 px-4 py-3"
+      className="absolute left-6 top-6 z-10 flex items-center gap-3 px-4 py-3"
       style={{
         background: "var(--surface)",
         border: "1px solid var(--border)",
