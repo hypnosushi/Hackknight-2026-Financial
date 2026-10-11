@@ -20,13 +20,16 @@ class FakeGateway:
     def __init__(self, tweets=None, error=None):
         self._tweets = tweets or []
         self._error = error
+        self.calls = []  # (method, start, end)
 
     def fetch_user_timeline(self, username, start, end):
+        self.calls.append(("fetch_user_timeline", start, end))
         if self._error:
             raise self._error
         return self._tweets
 
     def fetch_recent_search(self, query, start, end):
+        self.calls.append(("fetch_recent_search", start, end))
         if self._error:
             raise self._error
         return self._tweets
@@ -140,6 +143,41 @@ def test_classify_falls_back_to_generic_categories_when_llm_unreachable(monkeypa
 
     assert resp.status_code == 200
     assert len(resp.json()) == 1  # generic default categories still let classification proceed
+
+
+def test_classify_passes_explicit_start_and_end_to_the_gateway(monkeypatch):
+    monkeypatch.setattr(twitter_router, "classify", _fake_classify)
+    gateway = FakeGateway(tweets=[BULLISH_TWEET])
+    app.dependency_overrides[get_twitter_gateway] = lambda: gateway
+    client = TestClient(app)
+    try:
+        resp = client.get(
+            "/twitter/classify",
+            params={"entity": "NVDA", "query": "nvidia",
+                    "start": "2026-10-01T00:00:00Z", "end": "2026-10-08T00:00:00Z"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    [(_, start, end)] = gateway.calls
+    assert start.isoformat() == "2026-10-01T00:00:00+00:00"
+    assert end.isoformat() == "2026-10-08T00:00:00+00:00"
+
+
+def test_classify_defaults_to_the_usual_lookback_without_start_or_end(monkeypatch):
+    monkeypatch.setattr(twitter_router, "classify", _fake_classify)
+    gateway = FakeGateway(tweets=[BULLISH_TWEET])
+    app.dependency_overrides[get_twitter_gateway] = lambda: gateway
+    client = TestClient(app)
+    try:
+        resp = client.get("/twitter/classify", params={"entity": "NVDA", "query": "nvidia"})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    [(_, start, end)] = gateway.calls
+    assert (end - start) == twitter_router.SEARCH_LOOKBACK
 
 
 def test_classify_drops_post_on_jev_error(monkeypatch):
