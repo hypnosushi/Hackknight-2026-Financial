@@ -40,9 +40,10 @@ predefined map, so this is one ranked query over those tags, not a new pipeline.
    markets, ranked as in Design.
 2. Match a market when any of its `market_entities` rows is the company or one of the
    company's tags.
-3. Return at most one market per event. Tags are stored per event, so every market in an
-   event (each strike of a price ladder) matches equally; without this rule, the top 3 would
-   be three strikes of one question.
+3. Return at most one market per series (a market without a series: per event). Tags are
+   stored per event, so every strike of an event matches equally, and a series repeats one
+   question every month; without this rule, the top results are one question many times
+   (seen live: 9 of NVDA's top 10 were "NVIDIA A100/H100/H200/B200 average hourly price" months).
 4. When fewer than 3 events match, return only the ones that do (0, 1 or 2) and nothing else.
    Never pad with unrelated markets. Zero matches is an empty list, not an error.
 5. Unknown company -> 404.
@@ -181,7 +182,7 @@ for. Schema changes: the `volume_24h` column (proposed) and `company_tags` in th
 - For a company with its own tagged markets, the first result is tagged with the company.
 - A market matching only a resource/country/sector tag never ranks above one tagged with the
   company or a close company.
-- No two results come from the same event.
+- No two results come from the same series (or, without one, the same event).
 - A company with 2 matching events returns exactly 2; with none, an empty list and HTTP 200.
 - Every result is active (`status = 'active'`) and carries `matched` and `tier`.
 - One SQL query per request, after the tag list is built.
