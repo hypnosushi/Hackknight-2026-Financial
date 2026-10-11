@@ -35,7 +35,8 @@ def client(monkeypatch):
 
 def test_recent_alerts_carry_their_companies(client):
     body = client.get("/alerts/recent", params={"minutes": 30, "companies": 5}).json()
-    assert body[0]["companies"][0] == {"symbol": "NVDA", "name": "NVIDIA CORP", "tier": 1, "matched": ["NVDA"]}
+    assert body[0]["companies"][0] == {"symbol": "NVDA", "name": "NVIDIA CORP", "tier": 1, "matched": ["NVDA"],
+                                       "relevance": None}
     assert client.calls["recent"] == (50, 5)
 
 

@@ -8,7 +8,7 @@ Importing the model modules registers their tables, so the shared connect() crea
 
 from datetime import datetime, timezone
 
-from sqlalchemy import case, delete, func, or_, select
+from sqlalchemy import case, delete, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -24,11 +24,25 @@ from backend.models.graph_event import GraphEvent
 from backend.models.market_enrichment import MarketEnrichment
 from backend.models.market_entity import MarketEntity
 
-__all__ = ["connect", "load_alert", "alerts_to_process", "market_tags", "event_markets", "graph_links",
+__all__ = ["connect", "add_columns", "all_companies", "load_alert", "alerts_to_process", "market_tags", "event_markets", "graph_links",
            "save_impacts", "save_run", "recent_alerts", "company_alerts"]
 
 MAX_ATTEMPTS = 3
 EVENT_SOURCE, EVENT_TYPE = "market", "odds_move"  # company graph F7's values for a market move
+
+
+async def add_columns(engine: AsyncEngine) -> None:
+    """Columns added after the table first shipped (create_all doesn't add columns)."""
+    async with engine.begin() as conn:
+        await conn.execute(text("ALTER TABLE alert_impacts ADD COLUMN IF NOT EXISTS relevance numeric"))
+
+
+async def all_companies(engine: AsyncEngine) -> list[tuple[str, str]]:
+    """Every company in `entities`: the map's 50 plus those the company graph added."""
+    async with engine.connect() as conn:
+        rows = await conn.execute(select(Entity.symbol, Entity.name).where(Entity.type == "company")
+                                  .order_by(Entity.symbol))
+        return [(s, n) for s, n in rows]
 
 
 async def load_alert(engine: AsyncEngine, alert_id: int) -> dict | None:
@@ -110,8 +124,8 @@ async def save_impacts(engine: AsyncEngine, alert: dict, impacts: list[Impact]) 
         await conn.execute(delete(AlertImpact).where(AlertImpact.alert_id == alert["alert_id"]))
         if impacts:
             await conn.execute(pg_insert(AlertImpact).values([
-                {"alert_id": alert["alert_id"], "entity_symbol": i.symbol, "tier": i.tier, "matched": i.matched}
-                for i in impacts]))
+                {"alert_id": alert["alert_id"], "entity_symbol": i.symbol, "tier": i.tier, "matched": i.matched,
+                 "relevance": i.relevance} for i in impacts]))
         direct = [i for i in impacts if i.tier == 1]
         if direct and alert.get("url"):
             title = alert.get("event_title") or alert.get("title") or alert["market_id"]
@@ -152,22 +166,26 @@ async def recent_alerts(engine: AsyncEngine, since: datetime, limit: int, per_al
         if not alerts:
             return []
         impacts = (await conn.execute(
-            select(AlertImpact.alert_id, AlertImpact.entity_symbol, AlertImpact.tier, AlertImpact.matched, Entity.name)
+            select(AlertImpact.alert_id, AlertImpact.entity_symbol, AlertImpact.tier, AlertImpact.matched,
+                   AlertImpact.relevance, Entity.name)
             .outerjoin(Entity, Entity.symbol == AlertImpact.entity_symbol)
             .where(AlertImpact.alert_id.in_([a["id"] for a in alerts]))
-            .order_by(AlertImpact.alert_id, AlertImpact.tier, AlertImpact.entity_symbol))).all()
+            .order_by(AlertImpact.alert_id, AlertImpact.tier, AlertImpact.relevance.desc().nulls_last(),
+                      AlertImpact.entity_symbol))).all()
     by_alert: dict[int, list[dict]] = {}
     for i in impacts:
         rows = by_alert.setdefault(i.alert_id, [])
         if len(rows) < per_alert:
-            rows.append({"symbol": i.entity_symbol, "name": i.name, "tier": i.tier, "matched": list(i.matched)})
+            rows.append({"symbol": i.entity_symbol, "name": i.name, "tier": i.tier, "matched": list(i.matched),
+                         "relevance": float(i.relevance) if i.relevance is not None else None})
     return [{**a, "companies": by_alert.get(a["id"], [])} for a in alerts]
 
 
 async def company_alerts(engine: AsyncEngine, symbol: str, since: datetime, limit: int) -> list[dict]:
     """Alerts that affected this company, newest first, with why."""
     query = (select(Alert.id, Alert.created_at, Alert.source, Alert.market_id, Alert.direction, Alert.summary,
-                    Alert.score, Market.title, Market.event_title, Market.url, AlertImpact.tier, AlertImpact.matched)
+                    Alert.score, Market.title, Market.event_title, Market.url, AlertImpact.tier, AlertImpact.matched,
+                    AlertImpact.relevance)
              .join(AlertImpact, AlertImpact.alert_id == Alert.id)
              .outerjoin(Market, (Market.source == Alert.source) & (Market.market_id == Alert.market_id))
              .where(AlertImpact.entity_symbol == symbol, Alert.created_at >= since)

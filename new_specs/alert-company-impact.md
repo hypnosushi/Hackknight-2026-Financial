@@ -1,6 +1,6 @@
 # Alert → Company Impact
 
-**Status:** Built (backend, tiers 1-2): `backend/alert_impact/`, `backend/api/alerts.py`
+**Status:** Built (backend, tiers 1-3): `backend/alert_impact/`, `backend/api/alerts.py`
 **Owner:** Unassigned
 
 ## Problem / Why
@@ -92,6 +92,19 @@ free-text relationship keywords, resolved once to map entities by `match_tags` a
 such as a memory-chip market reaching a company whose supplier edge is tagged "memory". Until
 F14 has run and the cache is filled, tier 3 is empty and an oil market only reaches the
 companies Jev tagged directly in tier 1.
+
+### Tier 3 as built: Jev over every company
+
+Instead of F14 keywords, tier 3 asks Jev directly (`backend/alert_impact/jev_match.py`): the
+market's title, outcome, event and rules are the state, and every company in `entities` (the 50
+map companies plus those the company graph added, 121 today) gets one yes/no question, "would
+this market's outcome matter to an investor in X: is it about X, or would it directly move its
+sales, costs, prices or regulation?", 50 per call, calls in parallel (~1-2 s). Companies at 0.5
+or more that tiers 1-2 didn't already find are tier 3, ranked by probability, stored with
+`relevance` and the market's own tags as `matched`. This reaches companies from markets about
+things (gas prices -> refiners) with no keyword table. If Jev fails, the alert keeps its tiers
+1-2 and the run records why tier 3 was skipped. `ALERT_IMPACT_JEV=0` turns it off. The F14 /
+`company_entity_tags` route below remains an option for cheaper, explainable matches.
 
 ### Worker
 

@@ -18,8 +18,9 @@ router = APIRouter(tags=["alerts"])
 class AlertCompany(BaseModel):
     symbol: str
     name: str | None
-    tier: int  # 1 = the market is about it, 2 = linked to a tier-1 company in the company graph
-    matched: list[str]  # why: the tag (tier 1) or the tier-1 companies it links to (tier 2)
+    tier: int  # 1 = the market is about it, 2 = linked to a tier-1 company in the company graph, 3 = Jev
+    matched: list[str]  # why: the tag (1), the tier-1 companies it links to (2), the market's tags (3)
+    relevance: float | None = None  # tier 3: Jev's probability that the market matters to it
 
 
 class AlertOut(BaseModel):
@@ -42,6 +43,7 @@ class RecentAlertOut(AlertOut):
 class CompanyAlertOut(AlertOut):
     tier: int
     matched: list[str]
+    relevance: float | None = None
 
 
 @router.get("/alerts/recent", response_model=list[RecentAlertOut])

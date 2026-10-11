@@ -21,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from backend.alert_impact import db
+from backend.alert_impact.jev_match import affected_companies
 from backend.alert_impact.match import Impact, match_companies
 from backend.classification import JevError
 from backend.enrichment import db as enrichment_db
@@ -30,11 +31,14 @@ from backend.entities import EntityMap, load_entity_map
 from backend.models import Market
 
 log = logging.getLogger("alert_impact")
+USE_JEV = os.environ.get("ALERT_IMPACT_JEV", "1") != "0"  # tier 3; read again in main() after load_dotenv
 
 
-async def impacts_for(engine, alert: dict, entity_map: EntityMap, limit: int, save_tags: bool) -> list[Impact]:
-    """The companies this alert's market may affect. Enriches the market's event first if it
-    isn't tagged yet (saving the tags, so search sees them too, unless `save_tags` is False).
+async def impacts_for(engine, alert: dict, entity_map: EntityMap, limit: int, save_tags: bool,
+                      use_jev: bool = True) -> tuple[list[Impact], str | None]:
+    """The companies this alert's market may affect, and why tier 3 was skipped (or None).
+    Enriches the market's event first if it isn't tagged yet (saving the tags, so search sees
+    them too, unless `save_tags` is False). A failed tier 3 keeps tiers 1-2.
     """
     tags = await db.market_tags(engine, alert, entity_map)
     if tags is None:
@@ -46,7 +50,15 @@ async def impacts_for(engine, alert: dict, entity_map: EntityMap, limit: int, sa
         types = {e.symbol: e.category for e in entity_map.entities}
         tags = [(s, types[s]) for s in symbols]
     tier1 = [s for s, kind in tags if kind == "company"]
-    return match_companies(tags, await db.graph_links(engine, tier1), limit)
+    links = await db.graph_links(engine, tier1)
+    hits, skipped = [], None if use_jev else "disabled"
+    if use_jev:
+        try:
+            hits = await asyncio.to_thread(affected_companies, alert, await db.all_companies(engine))
+        except JevError as e:
+            skipped = f"tier 3 skipped: {e}"
+            log.warning("Alert %s: %s", alert.get("alert_id", alert["market_id"]), skipped)
+    return match_companies(tags, links, limit, hits), skipped
 
 
 async def process(engine, alert_id: int, entity_map: EntityMap, limit: int) -> None:
@@ -54,13 +66,13 @@ async def process(engine, alert_id: int, entity_map: EntityMap, limit: int) -> N
     if alert is None:
         return
     try:
-        impacts = await impacts_for(engine, alert, entity_map, limit, save_tags=True)
+        impacts, skipped = await impacts_for(engine, alert, entity_map, limit, save_tags=True, use_jev=USE_JEV)
         await db.save_impacts(engine, alert, impacts)
     except (JevError, ValueError, SQLAlchemyError) as e:
         log.warning("Alert %d (%s %s) failed: %s", alert_id, alert["source"], alert["market_id"], e)
         await db.save_run(engine, alert_id, "failed", error=str(e))
         return
-    await db.save_run(engine, alert_id, "done", companies=len(impacts))
+    await db.save_run(engine, alert_id, "done", companies=len(impacts), error=skipped)
     log.info("Alert %d %s %r -> %s", alert_id, alert["market_id"], alert.get("event_title") or alert.get("title"),
              ", ".join(f"{i.symbol}(t{i.tier})" for i in impacts) or "no companies")
 
@@ -97,16 +109,20 @@ async def simulate(engine, target: str, entity_map: EntityMap, limit: int) -> No
     if row is None:
         sys.exit(f"No market {target}")
     market = dict(row._mapping)
-    impacts = await impacts_for(engine, market, entity_map, limit, save_tags=False)
+    impacts, skipped = await impacts_for(engine, market, entity_map, limit, save_tags=False, use_jev=USE_JEV)
+    if skipped:
+        print(f"  ({skipped})")
     print(f"{source} {market_id}: {market.get('event_title') or market.get('title')}")
     for i in impacts:
-        print(f"  tier {i.tier}  {i.symbol:8}  matched {i.matched}" + (f"  confidence {i.confidence:.2f}" if i.tier == 2 else ""))
+        print(f"  tier {i.tier}  {i.symbol:8}  matched {i.matched}" + (f"  confidence {i.confidence:.2f}" if i.tier > 1 else ""))
     if not impacts:
         print("  no companies")
 
 
 async def main(args) -> None:
+    global USE_JEV
     load_dotenv()
+    USE_JEV = os.environ.get("ALERT_IMPACT_JEV", "1") != "0"
     url = os.environ.get("DATABASE_URL")
     if not url:
         sys.exit("Set DATABASE_URL in .env")
@@ -114,6 +130,7 @@ async def main(args) -> None:
     lookback = timedelta(minutes=float(os.environ.get("ALERT_IMPACT_LOOKBACK_MIN") or 60))
     entity_map = load_entity_map()
     engine = await db.connect(url)
+    await db.add_columns(engine)
     try:
         if args.simulate:
             await simulate(engine, args.simulate, entity_map, limit)
