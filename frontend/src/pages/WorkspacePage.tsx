@@ -10,6 +10,7 @@ import {
   QueryCard,
 } from "../features/workspace/market-view";
 import { ProjectSidebar, SaveProjectButton } from "../features/workspace/projects";
+import { AlertsFeed, LiveAlertsProvider } from "../features/workspace/alerts";
 
 /**
  * Left to right: the projects rail's resting width (`left-14`), the graph,
@@ -44,16 +45,17 @@ function MarketViewColumn() {
     <div className="flex h-full w-full">
       {/* pl-20 (not p-6 on all sides): the projects rail overlays this pane at
           a higher z-index, so content needs clearance from the true left edge.
-          The scroll area has no header row, so the chart gets the full height;
-          Save is a small square button floating bottom-right of this column,
-          and pb-20 lets the last content scroll clear of it. */}
+          The chart takes whatever height is left over, so the query card ends up
+          flush with the bottom of the screen on a tall window; min-h keeps the
+          chart usable on a short one, and the column scrolls when everything
+          together is taller than the window. Save is a small square button at
+          the bottom-right of the query card. */}
       <div className="relative min-w-0 flex-1">
-        <div className="flex h-full flex-col gap-5 overflow-y-auto py-6 pb-20 pl-20 pr-6">
-          <OverlayChart />
-          <QueryCard />
-        </div>
-        <div className="absolute bottom-6 right-6 z-10">
-          <SaveProjectButton />
+        <div className="flex h-full flex-col gap-5 overflow-y-auto pb-6 pl-20 pr-6 pt-6">
+          <OverlayChart className="flex min-h-[780px] flex-1 flex-col gap-3 rounded-[var(--radius-panel)] p-4" />
+          <div className="shrink-0">
+            <QueryCard action={<SaveProjectButton />} />
+          </div>
         </div>
       </div>
       <aside className="h-full w-80 shrink-0">
@@ -78,6 +80,7 @@ export function WorkspaceShell() {
       />
       <ProjectSidebar />
       <EvidenceDrawer />
+      <AlertsFeed />
     </div>
   );
 }
@@ -85,7 +88,9 @@ export function WorkspaceShell() {
 export default function WorkspacePage() {
   return (
     <WorkspaceProvider>
-      <WorkspaceShell />
+      <LiveAlertsProvider>
+        <WorkspaceShell />
+      </LiveAlertsProvider>
     </WorkspaceProvider>
   );
 }

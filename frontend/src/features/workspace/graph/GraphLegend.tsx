@@ -74,11 +74,14 @@ function EdgeSwatch({ rel }: { rel: RelationshipType }) {
 export function GraphLegend({
   showBoardInterlock = false,
   showHighlights = false,
+  showFlashes = false,
   ticker = null,
 }: {
   showBoardInterlock?: boolean;
   /** Whether any drawn company has a recent highlight (a colored node). */
   showHighlights?: boolean;
+  /** Whether any drawn company is flashing for a live market move. */
+  showFlashes?: boolean;
   ticker?: string | null;
 }) {
   const items = showBoardInterlock ? ORDER : ORDER.filter((r) => r !== "board-interlock");
@@ -110,6 +113,35 @@ export function GraphLegend({
       <span className="text-[10px]" style={{ color: "var(--text-tertiary)" }}>
         Arrows point from seller to buyer
       </span>
+      {showFlashes && (
+        <>
+          <span
+            className="mt-1 text-[10px] font-semibold uppercase tracking-wider"
+            style={{ color: "var(--text-tertiary)" }}
+          >
+            Live move · last hour
+          </span>
+          {(
+            [
+              ["--status-positive", "Yes price up"],
+              ["--status-negative", "Yes price down"],
+            ] as const
+          ).map(([token, label]) => (
+            <div key={token} className="flex items-center gap-2">
+              <span
+                className="h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ background: `var(${token})`, boxShadow: `0 0 0 4px color-mix(in srgb, var(${token}) 30%, transparent)` }}
+              />
+              <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
+                {label}
+              </span>
+            </div>
+          ))}
+          <span className="text-[10px]" style={{ color: "var(--text-tertiary)" }}>
+            Flashing = a market it's exposed to moved sharply (Yes price, not the stock)
+          </span>
+        </>
+      )}
       {showHighlights && (
         <>
           <span

@@ -1,39 +1,34 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { MagnifyingGlass, TrendDown, TrendUp, X } from "@phosphor-icons/react";
-import { fetchRecommendedMarkets, matchMarkets, toMarketCard } from "../../../lib/api/predictionMarkets";
-import type { MarketSource, PredictionMarket, PredictionMatch } from "../../../types/predictionMarket";
-import { GenerateButton } from "../markets";
-import { useWorkspace } from "../useWorkspace";
-
-// Placeholder lettermarks in each venue's brand color. Swap SourceMark's
-// contents for the official logo assets from Kalshi's and Polymarket's brand
-// kits before shipping.
-const SOURCE_MARKS: Record<MarketSource, { letter: string; bg: string; fg: string; name: string }> = {
-  kalshi: { letter: "K", bg: "#28CC95", fg: "#04261b", name: "Kalshi" },
-  polymarket: { letter: "P", bg: "#2E5CFF", fg: "#ffffff", name: "Polymarket" },
-};
+import {
+  fetchRecommendedMarkets,
+  matchMarkets,
+  toMarketCard,
+} from "../../../lib/api/predictionMarkets";
+import type {
+  PredictionMarket,
+  PredictionMatch,
+} from "../../../types/predictionMarket";
+import { SourceMark } from "../shared/SourceMark";
 
 const compact = new Intl.NumberFormat("en-US", {
   notation: "compact",
   maximumFractionDigits: 1,
 });
+import { CompanyAlerts, LiveEventsList, useLiveAlerts } from "../alerts";
+import { GenerateButton } from "../markets";
+import { useWorkspace } from "../useWorkspace";
 
-function SourceMark({ source }: { source: MarketSource }) {
-  const { letter, bg, fg, name } = SOURCE_MARKS[source];
-  return (
-    <span
-      role="img"
-      aria-label={name}
-      title={name}
-      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[11px] font-bold"
-      style={{ background: bg, color: fg }}
-    >
-      {letter}
-    </span>
-  );
-}
+/** The top half shows this many recommendations; the live list below needs the rest of the height. */
+const RECOMMENDED_MAX = 4;
+/** A recommended market whose Yes price moved this many cents in 24h counts as a large move (flashes the searched company). */
+const LARGE_CHANGE_CENTS = 5;
 
-const TIER_LABELS: Record<1 | 2 | 3, string> = { 1: "About the company", 2: "Linked company", 3: "Related topic" };
+const TIER_LABELS: Record<1 | 2 | 3, string> = {
+  1: "About the company",
+  2: "Linked company",
+  3: "Related topic",
+};
 
 function formatClose(iso: string | null): string {
   if (!iso) return "no close date";
@@ -64,7 +59,11 @@ function MarketCard({
   const change = market.change24h ?? 0;
   const up = change > 0;
   const down = change < 0;
-  const changeColor = up ? "var(--status-positive)" : down ? "var(--status-negative)" : "var(--status-neutral)";
+  const changeColor = up
+    ? "var(--status-positive)"
+    : down
+      ? "var(--status-negative)"
+      : "var(--status-neutral)";
   const match = "matchScore" in market ? market : null;
 
   return (
@@ -85,39 +84,66 @@ function MarketCard({
       >
         <div className="flex items-start gap-2">
           <SourceMark source={market.source} />
-          <h4 className="line-clamp-2 text-xs font-semibold leading-snug" style={{ color: "var(--text-primary)" }}>
+          <h4
+            className="line-clamp-2 text-xs font-semibold leading-snug"
+            style={{ color: "var(--text-primary)" }}
+          >
             {market.title}
           </h4>
         </div>
 
         {hasQuote ? (
-          <div className="flex items-baseline gap-2 pl-7 text-[10px]" style={{ color: "var(--text-tertiary)" }}>
-            <span className="text-sm font-semibold tabular-nums" style={{ color: "var(--text-primary)" }}>
+          <div
+            className="flex items-baseline gap-2 pl-7 text-[10px]"
+            style={{ color: "var(--text-tertiary)" }}
+          >
+            <span
+              className="text-sm font-semibold tabular-nums"
+              style={{ color: "var(--text-primary)" }}
+            >
               {market.yesPrice}%
             </span>
-            <span className="flex items-center gap-0.5 tabular-nums" style={{ color: changeColor }}>
+            <span
+              className="flex items-center gap-0.5 tabular-nums"
+              style={{ color: changeColor }}
+            >
               {up && <TrendUp size={10} weight="bold" aria-hidden="true" />}
               {down && <TrendDown size={10} weight="bold" aria-hidden="true" />}
               {up ? "+" : ""}
               {change}¢
             </span>
             <span className="ml-auto tabular-nums">
-              {market.volume !== undefined && `Vol ${compact.format(market.volume)} · `}
+              {market.volume !== undefined &&
+                `Vol ${compact.format(market.volume)} · `}
               {formatClose(market.closeTime)}
             </span>
           </div>
         ) : (
           // Real recommendations carry no live quote: show why it matched instead of a price.
-          <p className="truncate pl-7 text-[10px]" style={{ color: "var(--text-tertiary)" }}>
-            {market.tier && <span style={{ color: "var(--accent)" }}>{TIER_LABELS[market.tier]}</span>}
-            {market.matched && market.matched.length > 0 && ` · ${market.matched.join(", ")}`}
+          <p
+            className="truncate pl-7 text-[10px]"
+            style={{ color: "var(--text-tertiary)" }}
+          >
+            {market.tier && (
+              <span style={{ color: "var(--accent)" }}>
+                {TIER_LABELS[market.tier]}
+              </span>
+            )}
+            {market.matched &&
+              market.matched.length > 0 &&
+              ` · ${market.matched.join(", ")}`}
             {` · closes ${formatClose(market.closeTime)}`}
           </p>
         )}
 
         {match && (
-          <p className="truncate pl-7 text-[10px]" style={{ color: "var(--text-tertiary)" }}>
-            <span style={{ color: "var(--accent)" }}>{Math.round(match.matchScore * 100)}% match</span>
+          <p
+            className="truncate pl-7 text-[10px]"
+            style={{ color: "var(--text-tertiary)" }}
+          >
+            <span style={{ color: "var(--accent)" }}>
+              {Math.round(match.matchScore * 100)}% match
+            </span>
             {" · "}
             {match.matchReason}
           </p>
@@ -136,6 +162,7 @@ function MarketCard({
  */
 export function PredictionMarketPanel({ ticker }: { ticker: string | null }) {
   const { state, dispatch } = useWorkspace();
+  const { reportCenterMove } = useLiveAlerts();
   const tags = state.tags;
   const tagsKey = tags.join("\u0000");
   const [recs, setRecs] = useState<PredictionMarket[]>([]);
@@ -178,6 +205,26 @@ export function PredictionMarketPanel({ ticker }: { ticker: string | null }) {
     };
   }, [submitted]);
 
+  // A large 24h move in a recommended market flashes the searched company on the graph,
+  // the same way a live alert flashes the companies it touches.
+  useEffect(() => {
+    const biggest = recs.reduce<PredictionMarket | null>(
+      (best, m) =>
+        Math.abs(m.change24h ?? 0) > Math.abs(best?.change24h ?? 0) ? m : best,
+      null,
+    );
+    const change = biggest?.change24h ?? 0;
+    reportCenterMove(
+      ticker,
+      Math.abs(change) >= LARGE_CHANGE_CENTS
+        ? change > 0
+          ? "yes_up"
+          : "yes_down"
+        : null,
+    );
+    return () => reportCenterMove(null, null);
+  }, [recs, ticker, reportCenterMove]);
+
   function onSubmit(e: FormEvent) {
     e.preventDefault();
     const trimmed = query.trim();
@@ -203,7 +250,8 @@ export function PredictionMarketPanel({ ticker }: { ticker: string | null }) {
 
   const showingSearch = submitted !== null;
   const loading = showingSearch ? searching : recsLoading;
-  const items = showingSearch ? matches : recs;
+  // Search results get the full list (the user asked for them); recommendations are capped so the live list fits.
+  const items = showingSearch ? matches : recs.slice(0, RECOMMENDED_MAX);
 
   return (
     <section
@@ -217,10 +265,16 @@ export function PredictionMarketPanel({ ticker }: { ticker: string | null }) {
       <div className="flex items-center gap-2">
         <SourceMark source="kalshi" />
         <SourceMark source="polymarket" />
-        <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-tertiary)" }}>
-          Prediction market recommendations
+        <span
+          className="text-[10px] font-semibold uppercase tracking-wider"
+          style={{ color: "var(--text-tertiary)" }}
+        >
+          Recommended
         </span>
-        <span className="ml-auto flex shrink-0 items-center gap-2" style={{ color: "var(--text-tertiary)" }}>
+        <span
+          className="ml-auto flex shrink-0 items-center gap-2"
+          style={{ color: "var(--text-tertiary)" }}
+        >
           {selectedCount > 0 && (
             <span
               className="rounded-full px-2 py-0.5 text-[10px] font-semibold"
@@ -235,7 +289,9 @@ export function PredictionMarketPanel({ ticker }: { ticker: string | null }) {
         </span>
       </div>
 
-      <>
+      <CompanyAlerts ticker={ticker} />
+
+      <div className="flex min-h-0 flex-[3] flex-col gap-2">
         <form
           onSubmit={onSubmit}
           className="flex items-center gap-2 px-2.5 py-1.5"
@@ -245,7 +301,11 @@ export function PredictionMarketPanel({ ticker }: { ticker: string | null }) {
             borderRadius: "var(--radius-control)",
           }}
         >
-          <MagnifyingGlass size={14} style={{ color: "var(--text-tertiary)" }} aria-hidden="true" />
+          <MagnifyingGlass
+            size={14}
+            style={{ color: "var(--text-tertiary)" }}
+            aria-hidden="true"
+          />
           <input
             type="text"
             value={query}
@@ -256,7 +316,12 @@ export function PredictionMarketPanel({ ticker }: { ticker: string | null }) {
             style={{ color: "var(--text-primary)" }}
           />
           {(query || showingSearch) && (
-            <button type="button" onClick={clear} aria-label="Clear search" style={{ color: "var(--text-tertiary)" }}>
+            <button
+              type="button"
+              onClick={clear}
+              aria-label="Clear search"
+              style={{ color: "var(--text-tertiary)" }}
+            >
               <X size={12} />
             </button>
           )}
@@ -285,7 +350,9 @@ export function PredictionMarketPanel({ ticker }: { ticker: string | null }) {
               color: "var(--text-tertiary)",
             }}
           >
-            {showingSearch ? `No markets matched “${submitted}”.` : `No markets found for ${ticker ?? "this company"} yet.`}
+            {showingSearch
+              ? `No markets matched “${submitted}”.`
+              : `No markets found for ${ticker ?? "this company"} yet.`}
           </p>
         ) : (
           <ul className="flex min-h-0 flex-col gap-1.5 overflow-y-auto pr-1">
@@ -300,10 +367,20 @@ export function PredictionMarketPanel({ ticker }: { ticker: string | null }) {
           </ul>
         )}
 
-        <div className="shrink-0 border-t pt-3" style={{ borderColor: "var(--border)" }}>
+        <div
+          className="shrink-0 border-t pt-3"
+          style={{ borderColor: "var(--border)" }}
+        >
           <GenerateButton />
         </div>
-      </>
+      </div>
+
+      <div
+        className="shrink-0"
+        style={{ borderTop: "1px solid var(--border)" }}
+      />
+
+      <LiveEventsList />
     </section>
   );
 }

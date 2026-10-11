@@ -5,6 +5,7 @@ import type { Project } from "../types/project";
 import { initialWorkspaceState } from "../types/project";
 import { workspaceReducer } from "../features/workspace/workspaceReducer";
 import { WorkspaceProvider } from "../features/workspace/WorkspaceProvider";
+import { LiveAlertsProvider } from "../features/workspace/alerts";
 import { WorkspaceShell } from "./WorkspacePage";
 
 /**
@@ -16,7 +17,9 @@ import { WorkspaceShell } from "./WorkspacePage";
  */
 export default function ProjectPage() {
   const { projectId } = useParams<{ projectId: string }>();
-  const [status, setStatus] = useState<"loading" | "not-found" | "error" | "done">("loading");
+  const [status, setStatus] = useState<
+    "loading" | "not-found" | "error" | "done"
+  >("loading");
   const [project, setProject] = useState<Project | null>(null);
 
   useEffect(() => {
@@ -58,17 +61,24 @@ export default function ProjectPage() {
     return (
       <div className="flex h-full w-full items-center justify-center">
         <span className="text-sm" style={{ color: "var(--status-negative)" }}>
-          {status === "not-found" ? "Project not found." : "Couldn't load this project."}
+          {status === "not-found"
+            ? "Project not found."
+            : "Couldn't load this project."}
         </span>
       </div>
     );
   }
 
-  const initialState = workspaceReducer(initialWorkspaceState, { type: "PROJECT_LOADED", project });
+  const initialState = workspaceReducer(initialWorkspaceState, {
+    type: "PROJECT_LOADED",
+    project,
+  });
 
   return (
     <WorkspaceProvider initialState={initialState}>
-      <WorkspaceShell />
+      <LiveAlertsProvider>
+        <WorkspaceShell />
+      </LiveAlertsProvider>
     </WorkspaceProvider>
   );
 }
