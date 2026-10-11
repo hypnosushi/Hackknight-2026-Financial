@@ -11,7 +11,8 @@ from company_graph.db import TABLES, create_tables
 from company_graph.schemas import CONFIDENCE
 
 GRAPH_TABLES = {"entities", "entity_relationships", "market_entities", "graph_company_profiles",
-                "graph_link_runs", "graph_processed_filings", "graph_events", "graph_highlights"}
+                "graph_link_runs", "graph_processed_filings", "graph_events", "graph_highlights",
+                "graph_board_runs", "graph_board_seats"}
 NOW = datetime(2026, 10, 10, tzinfo=timezone.utc)
 
 
@@ -94,3 +95,19 @@ def test_event_is_unique_per_company_and_url_and_highlights_cascade(engine):
     with engine.begin() as conn:
         conn.execute(GraphEvent.__table__.delete())
         assert conn.execute(text("SELECT count(*) FROM graph_highlights")).scalar() == 0
+
+
+def test_board_seat_is_unique_per_company_and_person_and_one_person_can_sit_on_two_boards(engine):
+    from datetime import date
+
+    from backend.models.graph_board_seat import GraphBoardSeat
+
+    seat = {"company_symbol": "TSLA", "person_cik": 1001, "name": "Marigold Quillfeather",
+            "raw_name": "QUILLFEATHER MARIGOLD", "role": "Director", "is_officer": False,
+            "filed_at": date(2026, 8, 15), "evidence_url": "https://www.sec.gov/Archives/x.xml"}
+    with engine.begin() as conn:
+        create_tables(conn)
+        conn.execute(insert(GraphBoardSeat), [seat])
+        conn.execute(insert(GraphBoardSeat), [{**seat, "company_symbol": "NVDA"}])  # no entities row needed
+    with pytest.raises(IntegrityError), engine.begin() as conn:
+        conn.execute(insert(GraphBoardSeat), [seat])

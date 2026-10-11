@@ -8,6 +8,8 @@ from backend.ingestion.common.db import connect, make_engine  # same engine setu
 from backend.models.base import Base
 from backend.models.entity import Entity
 from backend.models.entity_relationship import EntityRelationship
+from backend.models.graph_board_run import GraphBoardRun
+from backend.models.graph_board_seat import GraphBoardSeat
 from backend.models.graph_company_profile import GraphCompanyProfile
 from backend.models.graph_event import GraphEvent
 from backend.models.graph_highlight import GraphHighlight
@@ -19,7 +21,7 @@ __all__ = ["connect", "make_engine", "create_tables", "MODELS", "TABLES"]
 
 # Parents before children.
 MODELS = (Entity, EntityRelationship, MarketEntity, GraphCompanyProfile, GraphLinkRun,
-          GraphProcessedFiling, GraphEvent, GraphHighlight)
+          GraphProcessedFiling, GraphEvent, GraphHighlight, GraphBoardRun, GraphBoardSeat)
 TABLES = [m.__table__ for m in MODELS]
 
 

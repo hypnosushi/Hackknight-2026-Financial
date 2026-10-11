@@ -1,6 +1,7 @@
 """F9. Graph API: the two endpoints the Company Graph page polls.
 
     GET /graph/{ticker}        -> schemas.GraphResponse
+    GET /graph/{ticker}/board  -> schemas.BoardResponse
     GET /companies/search?q=   -> up to 10 {symbol, name}
 
 Mounted in backend/main.py with `app.include_router(company_graph.api.router)`.
@@ -29,7 +30,13 @@ GRAPH_EVENT_WINDOW_DAYS). Once the links are done, `refresh_highlights` starts F
     so the page keeps polling; then "done" with the new highlights.
 A failure in highlight building is logged and never turns a good links graph into an error.
 
-With GRAPH_FAKE=1 both endpoints serve the fixtures and touch no database and no network.
+GET /graph/{ticker}/board follows the same rules for the company's directors, with its own run
+row (`graph_board_runs`), TTL (GRAPH_BOARD_TTL_DAYS) and tasks (`_BOARD_RUNS`): the stored members
+at once, and `boards.build_board` in the background when there is no fresh run. A company with
+no Form 3 / 4 filings is "done" with no members. It is a separate request so the page can draw
+the links without waiting for it, and it never starts or delays a link or highlight run.
+
+With GRAPH_FAKE=1 every endpoint serves the fixtures and touches no database and no network.
 """
 
 from __future__ import annotations
@@ -46,6 +53,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from backend.models.graph_event import GraphEvent
 from backend.models.graph_highlight import GraphHighlight
+from company_graph import boards as graph_boards
 from company_graph import config as graph_config
 from company_graph import highlights as graph_highlights
 from company_graph import links as graph_links
@@ -53,12 +61,15 @@ from company_graph.companies import Company, CompanyDirectory, get_directory
 from company_graph.schemas import (
     DIRECTIONS,
     EVENT_TYPES,
+    BoardMemberOut,
+    BoardResponse,
     CompanyOut,
     GraphResponse,
     HighlightOut,
     LinkOut,
     NodeOut,
     fixture_tickers,
+    load_board_fixture,
     load_fixture,
 )
 
@@ -77,6 +88,9 @@ _RUNS: dict[str, asyncio.Task] = {}
 # symbol -> (ended_at, ok). Read by refresh_highlights to space runs out.
 _HIGHLIGHT_RUNS: dict[str, asyncio.Task] = {}
 _HIGHLIGHTS_DONE: dict[str, tuple[datetime, bool]] = {}
+
+# Per-symbol board-run tasks started by this process.
+_BOARD_RUNS: dict[str, asyncio.Task] = {}
 
 
 # --- dependencies (tests override these with app.dependency_overrides) ---------------
@@ -166,6 +180,11 @@ def get_link_builder() -> Callable:
     return graph_links.build_links
 
 
+def get_board_builder() -> Callable:
+    """The board run started for a company (boards.build_board)."""
+    return graph_boards.build_board
+
+
 def get_highlight_builder() -> Callable:
     """The highlight run started for a company once its links are done (highlights.build_highlights)."""
     return graph_highlights.build_highlights
@@ -198,11 +217,14 @@ def graph_parts(company_symbol: str, stored: list) -> tuple[list[NodeOut], list[
     return list(nodes.values()), out_links
 
 
-def run_status(run, now: datetime, cfg: graph_config.Config, task_running: bool) -> str:
-    """What to report for a company's link run: 'done', 'running', 'error', or 'start' (start a run). Pure."""
+def run_status(run, now: datetime, cfg: graph_config.Config, task_running: bool, ttl_s: float | None = None) -> str:
+    """What to report for a company's link run: 'done', 'running', 'error', or 'start' (start a run). Pure.
+
+    `ttl_s`: how long a done run stays fresh (default: the link TTL; board runs pass their own).
+    """
     if task_running or graph_links.is_in_progress(run, now):
         return "running"
-    if graph_links.is_fresh(run, now, cfg.link_ttl_s):
+    if graph_links.is_fresh(run, now, cfg.link_ttl_s if ttl_s is None else ttl_s):
         return "done"
     if run is not None and run.status == "error":
         at = run.fetched_at
@@ -357,6 +379,40 @@ def start_link_run(symbol: str, db: GraphDb, build: Callable, cfg: graph_config.
     return True
 
 
+# --- board runs ----------------------------------------------------------------------
+
+def _board_task_running(symbol: str) -> bool:
+    task = _BOARD_RUNS.get(symbol)
+    return task is not None and not task.done()
+
+
+def start_board_run(symbol: str, db: GraphDb, build: Callable, cfg: graph_config.Config,
+                    directory: CompanyDirectory | None) -> bool:
+    """Start build_board for `symbol` as a task with its own session, unless one is already running
+    in this process. Returns True when a task was started."""
+    if _board_task_running(symbol):
+        return False
+
+    async def go():
+        try:
+            async with db.run_session() as session:
+                result = await build(symbol, session=session, cfg=cfg, directory=directory)
+            log.info("board run for %s ended %s", symbol, getattr(result, "status", result))
+        except Exception:  # noqa: BLE001 - logged; the row (if any) says error or turns stale
+            log.exception("board run for %s failed", symbol)
+
+    task = asyncio.create_task(go(), name=f"company-graph-board-{symbol}")
+    _BOARD_RUNS[symbol] = task
+    task.add_done_callback(lambda t, s=symbol: _BOARD_RUNS.pop(s, None) if _BOARD_RUNS.get(s) is t else None)
+    return True
+
+
+def board_members(seats: list) -> list[BoardMemberOut]:
+    """API members from boards.read_board output. Pure."""
+    return [BoardMemberOut(id=graph_boards.member_id(s.person_cik), name=s.name, role=s.role,
+                           evidence_url=s.evidence_url, filed_at=s.filed_at.isoformat()) for s in seats]
+
+
 # --- endpoints -----------------------------------------------------------------------
 
 @router.get("/graph/{ticker}", response_model=GraphResponse)
@@ -397,6 +453,40 @@ async def get_graph(
 
     return GraphResponse(company=CompanyOut(symbol=company.symbol, name=company.name), status=status,
                          nodes=nodes, links=out_links, highlights=highlights)
+
+
+@router.get("/graph/{ticker}/board", response_model=BoardResponse)
+async def get_board(
+    ticker: str,
+    cfg: graph_config.Config = Depends(get_config),
+    db: GraphDb | None = Depends(get_db),
+    directory: CompanyDirectory | None = Depends(get_company_directory),
+    build: Callable = Depends(get_board_builder),
+) -> BoardResponse:
+    raw = ticker.strip().lstrip("$")
+    if cfg.fake:
+        symbol = raw.upper()
+        return load_board_fixture(symbol) or BoardResponse(
+            company=CompanyOut(symbol=symbol, name=symbol), status="done", members=[])
+
+    company = directory.resolve(raw) or directory.get(raw.upper())
+    if company is None:
+        raise HTTPException(status_code=404, detail=f"Unknown ticker {raw.upper()!r}: not in SEC's list of listed companies")
+
+    now = datetime.now(timezone.utc)
+    try:
+        async with db.session() as session:
+            run = await graph_boards.get_board_run(session, company.symbol)
+            status = run_status(run, now, cfg, _board_task_running(company.symbol), cfg.board_ttl_s)
+            if status == "start":
+                start_board_run(company.symbol, db, build, cfg, directory)
+                status = "running"
+            members = board_members(await graph_boards.read_board(session, company.symbol))
+    except (SQLAlchemyError, OSError) as exc:
+        log.warning("board read for %s failed: %s", company.symbol, exc)
+        raise HTTPException(status_code=503, detail="The team database is unavailable") from exc
+
+    return BoardResponse(company=CompanyOut(symbol=company.symbol, name=company.name), status=status, members=members)
 
 
 @router.get("/companies/search", response_model=list[CompanyOut])
