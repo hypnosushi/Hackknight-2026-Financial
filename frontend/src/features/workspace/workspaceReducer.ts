@@ -1,7 +1,14 @@
 import type { GraphStatus } from "../../types/graph";
+import { mergeGraphs } from "../../lib/api/graph";
 import { normalizeGraph, type CompanyGraph } from "../../types/workspaceGraph";
 import type { ChartRange, MarketCard } from "../../types/market";
-import type { AsyncStatus, EvidenceAnnotation, Project, QueryResult, WorkspaceState } from "../../types/project";
+import type {
+  AsyncStatus,
+  EvidenceAnnotation,
+  Project,
+  QueryResult,
+  WorkspaceState,
+} from "../../types/project";
 import { initialWorkspaceState } from "../../types/project";
 
 export type WorkspaceAction =
@@ -9,9 +16,14 @@ export type WorkspaceAction =
   | { type: "TICKER_CLEARED" } // back to the ticker prompt after a search that found nothing
   | { type: "GRAPH_STATUS"; status: AsyncStatus }
   // One per backend response: `status` "running" means more links are still coming.
-  | { type: "GRAPH_LOADED"; ticker: string; graph: CompanyGraph; status: GraphStatus }
+  | {
+      type: "GRAPH_LOADED";
+      ticker: string;
+      graph: CompanyGraph;
+      status: GraphStatus;
+    }
   | { type: "GRAPH_READY" } // graph complete and every company revealed
-  | { type: "GRAPH_EXPANDED"; ticker: string; graph: CompanyGraph } // hop filter: a linked company's graph merged in
+  | { type: "GRAPH_EXPANDED"; ticker: string; addition: CompanyGraph } // hop filter: a linked company's graph to merge in
   | { type: "TAGS_STATUS"; status: AsyncStatus }
   | { type: "TAGS_LOADED"; tags: string[] }
   | { type: "MARKETS_STATUS"; status: AsyncStatus }
@@ -30,7 +42,10 @@ export type WorkspaceAction =
   | { type: "PROJECT_SAVED"; id: string; name: string }
   | { type: "RESET" };
 
-export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
+export function workspaceReducer(
+  state: WorkspaceState,
+  action: WorkspaceAction,
+): WorkspaceState {
   switch (action.type) {
     case "TICKER_SUBMITTED":
       // Keep the active project: a project added empty from the sidebar gets its
@@ -61,35 +76,54 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
     case "GRAPH_LOADED": {
       // A response for a search the user has since moved on from — a poll
       // that was in flight when they opened a project or searched again.
-      if (action.ticker !== state.ticker || state.stage === "market-view") return state;
-      const graphStatus = action.status === "running" ? "loading" : action.status;
+      if (action.ticker !== state.ticker || state.stage === "market-view")
+        return state;
+      const graphStatus =
+        action.status === "running" ? "loading" : action.status;
       return { ...state, graph: action.graph, graphStatus };
     }
 
     case "GRAPH_EXPANDED": {
-      // Same staleness rule as GRAPH_LOADED. The merge is done by the caller
-      // (lib/api/graph mergeGraphs) against the graph it was looking at; if a
-      // poll replaced the graph in between, that merge is simply redone later.
-      if (action.ticker !== state.ticker || state.stage === "market-view" || !state.graph) return state;
-      return action.graph === state.graph ? state : { ...state, graph: action.graph };
+      // Same staleness rule as GRAPH_LOADED. Merged here, against the graph in state, so two
+      // expansions finishing close together never overwrite each other (a merge computed by the
+      // caller against an older graph would drop the other's nodes).
+      if (
+        action.ticker !== state.ticker ||
+        state.stage === "market-view" ||
+        !state.graph
+      )
+        return state;
+      const merged = mergeGraphs(state.graph, action.addition);
+      return merged === state.graph ? state : { ...state, graph: merged };
     }
 
     case "GRAPH_READY":
       // Only ever a step forward from the build-out: tag generation may
       // already have moved the stage on by the time the last node lands.
-      return state.stage === "building-graph" ? { ...state, stage: "graph-ready" } : state;
+      return state.stage === "building-graph"
+        ? { ...state, stage: "graph-ready" }
+        : state;
 
     case "TAGS_STATUS":
       return { ...state, stage: "generating-tags", tagsStatus: action.status };
 
     case "TAGS_LOADED":
-      return { ...state, tags: action.tags, tagsStatus: "done", stage: "picking-markets" };
+      return {
+        ...state,
+        tags: action.tags,
+        tagsStatus: "done",
+        stage: "picking-markets",
+      };
 
     case "MARKETS_STATUS":
       return { ...state, marketsStatus: action.status };
 
     case "MARKETS_LOADED":
-      return { ...state, suggestedMarkets: action.markets, marketsStatus: "done" };
+      return {
+        ...state,
+        suggestedMarkets: action.markets,
+        marketsStatus: "done",
+      };
 
     case "MARKET_TOGGLED": {
       const already = state.selectedMarketIds.includes(action.marketId);
@@ -104,10 +138,14 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
     case "MARKET_ADDED":
       return {
         ...state,
-        suggestedMarkets: state.suggestedMarkets.some((m) => m.marketId === action.market.marketId)
+        suggestedMarkets: state.suggestedMarkets.some(
+          (m) => m.marketId === action.market.marketId,
+        )
           ? state.suggestedMarkets
           : [...state.suggestedMarkets, action.market],
-        selectedMarketIds: state.selectedMarketIds.includes(action.market.marketId)
+        selectedMarketIds: state.selectedMarketIds.includes(
+          action.market.marketId,
+        )
           ? state.selectedMarketIds
           : [...state.selectedMarketIds, action.market.marketId],
       };
@@ -125,7 +163,8 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       return { ...state, stage: "market-view" };
 
     case "EVIDENCE_ADDED":
-      if (state.evidence.some((e) => e.id === action.annotation.id)) return state;
+      if (state.evidence.some((e) => e.id === action.annotation.id))
+        return state;
       return { ...state, evidence: [...state.evidence, action.annotation] };
 
     case "EVIDENCE_REMOVED": {
@@ -135,7 +174,11 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         ...state,
         evidence: state.evidence.filter((e) => e.item.id !== action.itemId),
         // Don't leave the drawer pointing at evidence that no longer exists.
-        pinnedAnnotationId: removed.some((e) => e.id === state.pinnedAnnotationId) ? null : state.pinnedAnnotationId,
+        pinnedAnnotationId: removed.some(
+          (e) => e.id === state.pinnedAnnotationId,
+        )
+          ? null
+          : state.pinnedAnnotationId,
       };
     }
 
@@ -167,7 +210,10 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         marketsStatus: "done",
         selectedMarketIds: action.project.selectedMarketIds,
         // Projects saved before the history route stored "3m", which no longer exists.
-        range: (action.project.range as string) === "3m" ? "6m" : (action.project.range ?? "1m"),
+        range:
+          (action.project.range as string) === "3m"
+            ? "6m"
+            : (action.project.range ?? "1m"),
         evidence: action.project.evidence,
         activeProjectId: action.project.id,
         activeProjectName: action.project.name,
@@ -199,7 +245,11 @@ export function todayUtc(now: number = Date.now()): string {
  * yesterday; stepping forward onto or past today returns to "now" (null), so
  * the chart never asks for a window in the future.
  */
-export function shiftDay(day: string | null, days: number, now: number = Date.now()): string | null {
+export function shiftDay(
+  day: string | null,
+  days: number,
+  now: number = Date.now(),
+): string | null {
   const today = todayUtc(now);
   const from = day ?? today;
   const next = new Date(`${from}T00:00:00Z`);

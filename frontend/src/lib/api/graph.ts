@@ -23,8 +23,22 @@ import { delay } from "./mockUtils";
  * name kept alongside. Edge direction needs no change: in both shapes a
  * "supplier" edge means its target supplies its source.
  */
+/**
+ * The backend keys companies by ticker, except unlisted foreign ones, which it keys by name
+ * ("Bitfarms Ltd"). Those can't be searched, charted or expanded, so the workspace leaves them out.
+ */
+export const TICKER_ID = /^[A-Z0-9]{1,6}([.-][A-Z0-9]{1,2})?$/;
+
+function isTickerId(id: string): boolean {
+  return TICKER_ID.test(id);
+}
+
 export function toWorkspaceGraph(response: CompanyGraphResponse): CompanyGraph {
   const { company } = response;
+  const others = response.nodes.filter(
+    (n) => n.symbol !== company.symbol && isTickerId(n.symbol),
+  );
+  const kept = new Set([company.symbol, ...others.map((n) => n.symbol)]);
   return {
     nodes: [
       {
@@ -35,23 +49,23 @@ export function toWorkspaceGraph(response: CompanyGraphResponse): CompanyGraph {
         industry: company.industry ?? undefined,
         isCenter: true,
       },
-      ...response.nodes
-        .filter((n) => n.symbol !== company.symbol)
-        .map((n) => ({
-          id: n.symbol,
-          kind: "company" as const,
-          label: n.symbol,
-          name: n.name,
-          industry: n.industry ?? undefined,
-        })),
+      ...others.map((n) => ({
+        id: n.symbol,
+        kind: "company" as const,
+        label: n.symbol,
+        name: n.name,
+        industry: n.industry ?? undefined,
+      })),
     ],
-    edges: response.links.map((l) => ({
-      source: l.source,
-      target: l.target,
-      relationship: l.type,
-      summary: l.summary,
-      evidenceUrl: l.evidence_url,
-    })),
+    edges: response.links
+      .filter((l) => kept.has(l.source) && kept.has(l.target))
+      .map((l) => ({
+        source: l.source,
+        target: l.target,
+        relationship: l.type,
+        summary: l.summary,
+        evidenceUrl: l.evidence_url,
+      })),
     highlights: response.highlights,
   };
 }
@@ -70,12 +84,18 @@ export function mergeGraphs(
 ): CompanyGraph {
   const nodeIds = new Set(base.nodes.map((n) => n.id));
   const newNodes = addition.nodes
-    .filter((n) => !nodeIds.has(n.id))
+    .filter(
+      (n) => !nodeIds.has(n.id) && (n.kind !== "company" || isTickerId(n.id)),
+    )
     .map((n) => ({ ...n, isCenter: false }));
+  const allIds = new Set([...nodeIds, ...newNodes.map((n) => n.id)]);
   const edgeKey = (e: GraphEdge) =>
     `${e.source}\u0000${e.target}\u0000${e.relationship}`;
   const edgeKeys = new Set(base.edges.map(edgeKey));
-  const newEdges = addition.edges.filter((e) => !edgeKeys.has(edgeKey(e)));
+  const newEdges = addition.edges.filter(
+    (e) =>
+      !edgeKeys.has(edgeKey(e)) && allIds.has(e.source) && allIds.has(e.target),
+  );
   const highlightKey = (h: GraphHighlight) =>
     `${h.target}\u0000${h.source_url}`;
   const highlightKeys = new Set((base.highlights ?? []).map(highlightKey));

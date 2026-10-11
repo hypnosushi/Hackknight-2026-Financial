@@ -5,7 +5,6 @@ import ForceGraph2D, {
 } from "react-force-graph-2d";
 import {
   fetchBoardNetwork,
-  mergeGraphs,
   pollCompanyGraph,
   type GraphFailure,
 } from "../../../lib/api/graph";
@@ -287,11 +286,7 @@ export function GraphCanvas() {
       };
       const stop = pollCompanyGraph(node.id, {
         onUpdate: ({ graph: addition, status }) => {
-          dispatch({
-            type: "GRAPH_EXPANDED",
-            ticker,
-            graph: mergeGraphs(buildRef.current.graph ?? graph, addition),
-          });
+          dispatch({ type: "GRAPH_EXPANDED", ticker, addition });
           if (status !== "running") finish();
         },
         onFailure: finish, // a company whose graph can't be read just stays a leaf

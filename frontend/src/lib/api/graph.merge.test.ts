@@ -29,11 +29,25 @@ describe("mergeGraphs", () => {
   it("adds new companies and edges, keeps one center, and dedupes known edges", () => {
     const merged = mergeGraphs(base, addition);
     expect(merged.nodes.map((n) => n.id)).toEqual(["NVDA", "TSM", "ASML"]);
-    expect(merged.nodes.filter((n) => n.isCenter).map((n) => n.id)).toEqual(["NVDA"]);
+    expect(merged.nodes.filter((n) => n.isCenter).map((n) => n.id)).toEqual([
+      "NVDA",
+    ]);
     expect(merged.edges).toHaveLength(2);
   });
 
   it("returns the same object when nothing is new", () => {
-    expect(mergeGraphs(base, { nodes: base.nodes, edges: base.edges })).toBe(base);
+    expect(mergeGraphs(base, { nodes: base.nodes, edges: base.edges })).toBe(
+      base,
+    );
+  });
+
+  it("drops companies keyed by name rather than ticker, and their edges", () => {
+    const merged = mergeGraphs(base, {
+      nodes: [{ id: "Bitfarms Ltd", kind: "company", label: "Bitfarms Ltd" }],
+      edges: [
+        { source: "TSM", target: "Bitfarms Ltd", relationship: "competitor" },
+      ],
+    });
+    expect(merged).toBe(base);
   });
 });

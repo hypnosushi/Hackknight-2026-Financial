@@ -1,6 +1,15 @@
 import { highlightsFor } from "../../company-graph/highlights";
-import { DIRECTION_COLOR, DIRECTION_LABEL, EVENT_LABEL } from "../../company-graph/labels";
-import type { CompanyGraph, GraphEdge, GraphNode, RelationshipType } from "../../../types/workspaceGraph";
+import {
+  DIRECTION_COLOR,
+  DIRECTION_LABEL,
+  EVENT_LABEL,
+} from "../../company-graph/labels";
+import type {
+  CompanyGraph,
+  GraphEdge,
+  GraphNode,
+  RelationshipType,
+} from "../../../types/workspaceGraph";
 import { RELATIONSHIP_COLORS, RELATIONSHIP_LABELS } from "./GraphLegend";
 import { PairNewsSection } from "./PairNewsSection";
 
@@ -26,15 +35,19 @@ interface Relation {
 /** Every company-to-company edge touching `id`, phrased from `id`'s side. */
 function relationsOf(graph: CompanyGraph, id: string): Relation[] {
   return graph.edges.flatMap((edge) => {
-    if (edge.target === id) return [{ edge, other: edge.source, role: edge.relationship }];
-    if (edge.source === id) return [{ edge, other: edge.target, role: reversed(edge.relationship) }];
+    if (edge.target === id)
+      return [{ edge, other: edge.source, role: edge.relationship }];
+    if (edge.source === id)
+      return [{ edge, other: edge.target, role: reversed(edge.relationship) }];
     return [];
   });
 }
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
 /**
@@ -61,8 +74,13 @@ export function NodeInfoCard({
   // about, and it's the one named beside the ticker in the header.
   const relations = isPerson
     ? []
-    : relationsOf(graph, node.id).sort((a, b) => Number(b.other === center?.id) - Number(a.other === center?.id));
-  const toCenter = node.isCenter ? undefined : relations.find((r) => r.other === center?.id);
+    : relationsOf(graph, node.id).sort(
+        (a, b) =>
+          Number(b.other === center?.id) - Number(a.other === center?.id),
+      );
+  const toCenter = node.isCenter
+    ? undefined
+    : relations.find((r) => r.other === center?.id);
   const subtitle = isPerson
     ? (node.role ?? "Director")
     : node.isCenter
@@ -74,7 +92,8 @@ export function NodeInfoCard({
   const title = isPerson ? node.label : (node.name ?? node.label);
   // News about this company together with the one it's linked to: the searched
   // ticker when there's a direct link, otherwise its first linked company.
-  const newsPartner = isPerson || node.isCenter ? undefined : (toCenter ?? relations[0])?.other;
+  const newsPartner =
+    isPerson || node.isCenter ? undefined : (toCenter ?? relations[0])?.other;
 
   return (
     // Below the hop slider. The canvas pane already starts past the projects rail.
@@ -89,7 +108,10 @@ export function NodeInfoCard({
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+          <h3
+            className="text-sm font-semibold"
+            style={{ color: "var(--text-primary)" }}
+          >
             {title}
           </h3>
           <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
@@ -122,10 +144,16 @@ export function NodeInfoCard({
       {relations.map((relation) => {
         const { edge, other, role } = relation;
         return (
-          <div key={`${edge.source}-${edge.target}-${edge.relationship}`} className="flex flex-col gap-1">
+          <div
+            key={`${edge.source}-${edge.target}-${edge.relationship}`}
+            className="flex flex-col gap-1"
+          >
             {/* The header already names the relationship to the searched ticker. */}
             {relation !== toCenter && (
-              <p className="flex items-center gap-2 text-xs font-medium" style={{ color: "var(--text-primary)" }}>
+              <p
+                className="flex items-center gap-2 text-xs font-medium"
+                style={{ color: "var(--text-primary)" }}
+              >
                 <span
                   className="h-2 w-2 shrink-0 rounded-full"
                   style={{ background: RELATIONSHIP_COLORS[edge.relationship] }}
@@ -149,7 +177,9 @@ export function NodeInfoCard({
                 className="self-start text-xs underline"
                 style={{ color: "var(--accent)" }}
               >
-                Source filing
+                {edge.evidenceUrl.includes("browse-edgar?SIC=")
+                  ? "SEC industry list"
+                  : "Source filing (SEC)"}
               </a>
             )}
           </div>
@@ -168,12 +198,21 @@ export function NodeInfoCard({
           className="flex flex-col gap-1 border-l-2 pl-3"
           style={{ borderColor: DIRECTION_COLOR[h.direction] }}
         >
-          <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: DIRECTION_COLOR[h.direction] }}>
+          <p
+            className="text-[10px] font-semibold uppercase tracking-wider"
+            style={{ color: DIRECTION_COLOR[h.direction] }}
+          >
             {DIRECTION_LABEL[h.direction]}
           </p>
-          <p className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>
+          <p
+            className="text-xs font-medium"
+            style={{ color: "var(--text-primary)" }}
+          >
             {EVENT_LABEL[h.event_type] ?? h.event_type}
-            <span className="font-normal" style={{ color: "var(--text-tertiary)" }}>
+            <span
+              className="font-normal"
+              style={{ color: "var(--text-tertiary)" }}
+            >
               {" "}
               · {formatTime(h.event_time)}
             </span>
@@ -199,7 +238,13 @@ export function NodeInfoCard({
         </article>
       ))}
 
-      {newsPartner && <PairNewsSection key={`${newsPartner}-${node.id}`} ticker={newsPartner} other={node.id} />}
+      {newsPartner && (
+        <PairNewsSection
+          key={`${newsPartner}-${node.id}`}
+          ticker={newsPartner}
+          other={node.id}
+        />
+      )}
     </section>
   );
 }
