@@ -9,9 +9,11 @@ from .models import ZoomTier
 TIER_TIMEFRAME = {
     ZoomTier.RECENT: "1Min",
     ZoomTier.DAILY: "5Min",
-    ZoomTier.WEEKLY: "1Hour",
-    ZoomTier.MONTHLY: "1Hour",
-    ZoomTier.QUARTERLY: "1Day",  # hourly over 90d would be ~600 bars; daily is plenty
+    # Finer bars keep the chart from looking blocky. Row counts are per trading
+    # session (6.5h): 5Min ~ 390 rows/week, 30Min ~ 270/month, 1Hour ~ 420/quarter.
+    ZoomTier.WEEKLY: "5Min",
+    ZoomTier.MONTHLY: "30Min",
+    ZoomTier.QUARTERLY: "1Hour",
     ZoomTier.ALL_TIME: "1Day",
 }
 

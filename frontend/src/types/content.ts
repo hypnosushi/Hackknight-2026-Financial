@@ -12,4 +12,6 @@ export interface ContentItem {
   entities: string[];
   url: string;
   published_at: string; // ISO 8601, as sent over JSON — parse with `new Date()` if needed
+  /** Tweets only (backend twitter_lookup.models.Engagement). */
+  engagement?: { likes: number; reposts: number; replies: number; quotes: number };
 }

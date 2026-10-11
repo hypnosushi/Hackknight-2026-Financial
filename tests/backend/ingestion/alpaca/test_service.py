@@ -53,5 +53,5 @@ def test_fetch_price_series_uses_correct_tier_params():
 
     fetch_price_series("NVDA", ZoomTier.WEEKLY, gateway, now=NOW)
 
-    assert fake.calls[0][1]["timeframe"] == "1Hour"
+    assert fake.calls[0][1]["timeframe"] == "5Min"
     assert fake.calls[0][1]["end"] == "2026-10-10T15:00:00Z"
