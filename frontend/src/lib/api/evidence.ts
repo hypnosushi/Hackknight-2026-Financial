@@ -139,6 +139,7 @@ export async function fetchCandidateTweets(
   range?: DateRange,
   filters?: TweetFilters,
 ): Promise<ContentItem[]> {
+  if (!ticker.trim()) return []; // nothing to search for yet; the X API is rate-limited
   const { start, end } = resolveRange(range ?? (filters ? daysRange(filters.days) : undefined));
   const account = filters?.account.trim().replace(/^@/, "");
   // Cashtag form catches "$NVDA"; the bare ticker catches plain mentions.
@@ -166,6 +167,7 @@ export async function fetchCandidateNews(
   range?: DateRange,
   filters?: NewsFilters,
 ): Promise<ContentItem[]> {
+  if (!ticker.trim()) return []; // nothing to search for yet; NewsAPI calls are metered
   const now = Date.now();
   const cutoff = now - NEWS_EXCLUDE_RECENT_DAYS * 86_400_000;
   const start = range?.start ?? new Date(now - NEWS_LOOKBACK_DAYS * 86_400_000).toISOString();

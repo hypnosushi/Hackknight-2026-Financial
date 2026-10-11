@@ -1,5 +1,11 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { CheckCircle, FunnelSimple, MagnifyingGlass, Newspaper, TwitterLogo } from "@phosphor-icons/react";
+import {
+  CheckCircle,
+  FunnelSimple,
+  MagnifyingGlass,
+  Newspaper,
+  TwitterLogo,
+} from "@phosphor-icons/react";
 import {
   DEFAULT_NEWS_FILTERS,
   DEFAULT_TWEET_FILTERS,
@@ -25,15 +31,22 @@ const SEARCH_FIELDS: { value: NewsSearchField; label: string }[] = [
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 function activeCount(kind: Kind, t: TweetFilters, n: NewsFilters): number {
   if (kind === "tweets") {
-    return Number(t.account.trim() !== "") + Number(t.days !== DEFAULT_TWEET_FILTERS.days);
+    return (
+      Number(t.account.trim() !== "") +
+      Number(t.days !== DEFAULT_TWEET_FILTERS.days)
+    );
   }
   return (
-    Number(n.searchIn.length > 0) + Number(n.domains.trim() !== "") + Number(n.sortBy !== DEFAULT_NEWS_FILTERS.sortBy)
+    Number(n.searchIn.length > 0) +
+    Number(n.domains.trim() !== "") +
+    Number(n.sortBy !== DEFAULT_NEWS_FILTERS.sortBy)
   );
 }
 
@@ -66,15 +79,22 @@ export function EvidenceSidebar() {
   const [tweetApplied, setTweetApplied] = useState(DEFAULT_TWEET_FILTERS);
   const [newsApplied, setNewsApplied] = useState(DEFAULT_NEWS_FILTERS);
 
-  const [items, setItems] = useState<Record<Kind, ContentItem[]>>({ tweets: [], news: [] });
-  const [status, setStatus] = useState<Record<Kind, "loading" | "done" | "error">>({
+  const [items, setItems] = useState<Record<Kind, ContentItem[]>>({
+    tweets: [],
+    news: [],
+  });
+  const [status, setStatus] = useState<
+    Record<Kind, "loading" | "done" | "error">
+  >({
     tweets: "loading",
     news: "loading",
   });
 
   // Jev sentiment per item id, filled in after each list loads. Cards render
   // right away and pick up their color when this arrives.
-  const [sentiments, setSentiments] = useState<Map<string, Sentiment>>(new Map());
+  const [sentiments, setSentiments] = useState<Map<string, Sentiment>>(
+    new Map(),
+  );
   useEffect(() => {
     const all = [...items.tweets, ...items.news];
     if (all.length === 0) return;
@@ -89,7 +109,11 @@ export function EvidenceSidebar() {
 
   // One effect per tab so switching tabs never refetches the other one, and a
   // superseded request can't overwrite a newer one.
+  // Both lists wait for market view: the sidebar is mounted (hidden) during the graph stages,
+  // and each fetch is a metered X / NewsAPI call followed by a Jev sentiment pass.
+  const inMarketView = state.stage === "market-view";
   useEffect(() => {
+    if (!inMarketView) return;
     let cancelled = false;
     setStatus((s) => ({ ...s, tweets: "loading" }));
     fetchCandidateTweets(ticker, undefined, tweetApplied)
@@ -102,9 +126,10 @@ export function EvidenceSidebar() {
     return () => {
       cancelled = true;
     };
-  }, [ticker, tweetApplied]);
+  }, [ticker, tweetApplied, inMarketView]);
 
   useEffect(() => {
+    if (!inMarketView) return;
     let cancelled = false;
     setStatus((s) => ({ ...s, news: "loading" }));
     fetchCandidateNews(ticker, undefined, newsApplied)
@@ -117,7 +142,7 @@ export function EvidenceSidebar() {
     return () => {
       cancelled = true;
     };
-  }, [ticker, newsApplied]);
+  }, [ticker, newsApplied, inMarketView]);
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -160,7 +185,10 @@ export function EvidenceSidebar() {
     <section
       aria-label="Add evidence"
       className="flex h-full min-h-0 flex-col gap-2 px-4 py-4"
-      style={{ background: "var(--surface)", borderLeft: "1px solid var(--border)" }}
+      style={{
+        background: "var(--surface)",
+        borderLeft: "1px solid var(--border)",
+      }}
     >
       <div className="flex items-center gap-2">
         <div
@@ -179,11 +207,16 @@ export function EvidenceSidebar() {
               className="flex items-center gap-1.5 rounded-[7px] px-2.5 py-1 text-xs font-medium"
               style={{
                 background: kind === k ? "var(--surface)" : "transparent",
-                color: kind === k ? "var(--text-primary)" : "var(--text-tertiary)",
+                color:
+                  kind === k ? "var(--text-primary)" : "var(--text-tertiary)",
                 boxShadow: kind === k ? "0 0 0 1px var(--border)" : "none",
               }}
             >
-              {k === "tweets" ? <TwitterLogo size={13} weight="bold" /> : <Newspaper size={13} weight="bold" />}
+              {k === "tweets" ? (
+                <TwitterLogo size={13} weight="bold" />
+              ) : (
+                <Newspaper size={13} weight="bold" />
+              )}
               {k === "tweets" ? "Tweets" : "News"}
             </button>
           ))}
@@ -191,7 +224,10 @@ export function EvidenceSidebar() {
         {state.evidence.length > 0 && (
           <span
             className="ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold"
-            style={{ background: "var(--accent)", color: "var(--accent-contrast)" }}
+            style={{
+              background: "var(--accent)",
+              color: "var(--accent-contrast)",
+            }}
           >
             {state.evidence.length} added
           </span>
@@ -199,8 +235,15 @@ export function EvidenceSidebar() {
       </div>
 
       <form onSubmit={onSubmit} className="flex flex-col gap-2">
-        <div className="flex items-center gap-2 px-2.5 py-1.5" style={inputStyle}>
-          <MagnifyingGlass size={14} style={{ color: "var(--text-tertiary)" }} aria-hidden="true" />
+        <div
+          className="flex items-center gap-2 px-2.5 py-1.5"
+          style={inputStyle}
+        >
+          <MagnifyingGlass
+            size={14}
+            style={{ color: "var(--text-tertiary)" }}
+            aria-hidden="true"
+          />
           <input
             type="text"
             value={query}
@@ -209,7 +252,11 @@ export function EvidenceSidebar() {
                 ? setTweetDraft({ ...tweetDraft, query: e.target.value })
                 : setNewsDraft({ ...newsDraft, query: e.target.value })
             }
-            placeholder={isTweets ? `"phrase", #hashtag, $${ticker || "TICKER"}…` : "Keywords or exact phrase…"}
+            placeholder={
+              isTweets
+                ? `"phrase", #hashtag, $${ticker || "TICKER"}…`
+                : "Keywords or exact phrase…"
+            }
             aria-label={isTweets ? "Search tweets" : "Search news"}
             className="w-full bg-transparent text-xs outline-none"
           />
@@ -219,7 +266,9 @@ export function EvidenceSidebar() {
             aria-expanded={filtersOpen}
             aria-label="Filters"
             className="flex shrink-0 items-center gap-1 text-[10px] font-medium"
-            style={{ color: filterCount > 0 ? "var(--accent)" : "var(--text-tertiary)" }}
+            style={{
+              color: filterCount > 0 ? "var(--accent)" : "var(--text-tertiary)",
+            }}
           >
             <FunnelSimple size={14} />
             {filterCount > 0 && filterCount}
@@ -227,30 +276,48 @@ export function EvidenceSidebar() {
         </div>
 
         {filtersOpen && (
-          <div className="flex flex-col gap-2 p-2.5 text-xs" style={{ ...inputStyle, background: "var(--bg)" }}>
+          <div
+            className="flex flex-col gap-2 p-2.5 text-xs"
+            style={{ ...inputStyle, background: "var(--bg)" }}
+          >
             {isTweets ? (
               <>
                 <label className="flex flex-col gap-1">
-                  <span style={{ color: "var(--text-tertiary)" }}>From account</span>
+                  <span style={{ color: "var(--text-tertiary)" }}>
+                    From account
+                  </span>
                   <input
                     type="text"
                     value={tweetDraft.account}
-                    onChange={(e) => setTweetDraft({ ...tweetDraft, account: e.target.value })}
+                    onChange={(e) =>
+                      setTweetDraft({ ...tweetDraft, account: e.target.value })
+                    }
                     placeholder="@handle"
                     className="px-2 py-1 outline-none"
                     style={inputStyle}
                   />
                   {tweetDraft.account.trim() && (
-                    <span className="text-[10px]" style={{ color: "var(--text-tertiary)" }}>
-                      Looks up this account's posts; the search above is ignored.
+                    <span
+                      className="text-[10px]"
+                      style={{ color: "var(--text-tertiary)" }}
+                    >
+                      Looks up this account's posts; the search above is
+                      ignored.
                     </span>
                   )}
                 </label>
                 <label className="flex flex-col gap-1">
-                  <span style={{ color: "var(--text-tertiary)" }}>Time window</span>
+                  <span style={{ color: "var(--text-tertiary)" }}>
+                    Time window
+                  </span>
                   <select
                     value={tweetDraft.days}
-                    onChange={(e) => setTweetDraft({ ...tweetDraft, days: Number(e.target.value) })}
+                    onChange={(e) =>
+                      setTweetDraft({
+                        ...tweetDraft,
+                        days: Number(e.target.value),
+                      })
+                    }
                     className="px-2 py-1 outline-none"
                     style={inputStyle}
                   >
@@ -265,7 +332,9 @@ export function EvidenceSidebar() {
             ) : (
               <>
                 <fieldset className="flex flex-col gap-1">
-                  <legend style={{ color: "var(--text-tertiary)" }}>Search in</legend>
+                  <legend style={{ color: "var(--text-tertiary)" }}>
+                    Search in
+                  </legend>
                   <div className="flex flex-wrap gap-1.5">
                     {SEARCH_FIELDS.map(({ value, label }) => {
                       const on = newsDraft.searchIn.includes(value);
@@ -285,7 +354,9 @@ export function EvidenceSidebar() {
                           className="rounded-full px-2 py-0.5"
                           style={{
                             border: `1px solid ${on ? "var(--accent)" : "var(--border)"}`,
-                            color: on ? "var(--accent)" : "var(--text-secondary)",
+                            color: on
+                              ? "var(--accent)"
+                              : "var(--text-secondary)",
                           }}
                         >
                           {label}
@@ -299,12 +370,17 @@ export function EvidenceSidebar() {
                   <input
                     type="text"
                     value={newsDraft.domains}
-                    onChange={(e) => setNewsDraft({ ...newsDraft, domains: e.target.value })}
+                    onChange={(e) =>
+                      setNewsDraft({ ...newsDraft, domains: e.target.value })
+                    }
                     placeholder="example.org, -blog.example.com"
                     className="px-2 py-1 outline-none"
                     style={inputStyle}
                   />
-                  <span className="text-[10px]" style={{ color: "var(--text-tertiary)" }}>
+                  <span
+                    className="text-[10px]"
+                    style={{ color: "var(--text-tertiary)" }}
+                  >
                     Comma-separated. Prefix with - to exclude.
                   </span>
                 </label>
@@ -312,7 +388,12 @@ export function EvidenceSidebar() {
                   <span style={{ color: "var(--text-tertiary)" }}>Sort by</span>
                   <select
                     value={newsDraft.sortBy}
-                    onChange={(e) => setNewsDraft({ ...newsDraft, sortBy: e.target.value as NewsFilters["sortBy"] })}
+                    onChange={(e) =>
+                      setNewsDraft({
+                        ...newsDraft,
+                        sortBy: e.target.value as NewsFilters["sortBy"],
+                      })
+                    }
                     className="px-2 py-1 outline-none"
                     style={inputStyle}
                   >
@@ -323,13 +404,20 @@ export function EvidenceSidebar() {
               </>
             )}
             <div className="flex items-center justify-between pt-1">
-              <button type="button" onClick={reset} style={{ color: "var(--text-tertiary)" }}>
+              <button
+                type="button"
+                onClick={reset}
+                style={{ color: "var(--text-tertiary)" }}
+              >
                 Reset
               </button>
               <button
                 type="submit"
                 className="rounded-[var(--radius-pill)] px-3 py-1 font-semibold"
-                style={{ background: "var(--accent)", color: "var(--accent-contrast)" }}
+                style={{
+                  background: "var(--accent)",
+                  color: "var(--accent-contrast)",
+                }}
               >
                 Apply
               </button>
@@ -351,7 +439,10 @@ export function EvidenceSidebar() {
             <li
               key={i}
               className="h-16 animate-pulse"
-              style={{ background: "var(--border)", borderRadius: "var(--radius-control)" }}
+              style={{
+                background: "var(--border)",
+                borderRadius: "var(--radius-control)",
+              }}
             />
           ))}
         </ul>
@@ -381,7 +472,11 @@ export function EvidenceSidebar() {
                 <button
                   type="button"
                   onClick={() => toggle(item)}
-                  title={added ? "Click to remove from evidence" : "Click to add as evidence"}
+                  title={
+                    added
+                      ? "Click to remove from evidence"
+                      : "Click to add as evidence"
+                  }
                   aria-pressed={added}
                   className="flex w-full flex-col gap-1 px-2.5 py-2 text-left"
                   style={{
@@ -396,9 +491,19 @@ export function EvidenceSidebar() {
                     borderRadius: "var(--radius-control)",
                   }}
                 >
-                  <div className="flex items-center gap-1.5 text-[10px]" style={{ color: "var(--text-tertiary)" }}>
-                    {item.source === "twitter" ? <TwitterLogo size={12} /> : <Newspaper size={12} />}
-                    <span className="truncate font-medium" style={{ color: "var(--text-secondary)" }}>
+                  <div
+                    className="flex items-center gap-1.5 text-[10px]"
+                    style={{ color: "var(--text-tertiary)" }}
+                  >
+                    {item.source === "twitter" ? (
+                      <TwitterLogo size={12} />
+                    ) : (
+                      <Newspaper size={12} />
+                    )}
+                    <span
+                      className="truncate font-medium"
+                      style={{ color: "var(--text-secondary)" }}
+                    >
                       {item.author ?? new URL(item.url, "http://x").hostname}
                     </span>
                     {sentiment && (
@@ -407,11 +512,20 @@ export function EvidenceSidebar() {
                         style={{ color: SENTIMENT_COLOR[sentiment] }}
                         title={`${SENTIMENT_LABEL[sentiment]} sentiment (Jev)`}
                       >
-                        {SENTIMENT_GLYPH[sentiment]} {SENTIMENT_LABEL[sentiment]}
+                        {SENTIMENT_GLYPH[sentiment]}{" "}
+                        {SENTIMENT_LABEL[sentiment]}
                       </span>
                     )}
-                    <span className="ml-auto shrink-0">{formatDate(item.published_at)}</span>
-                    {added && <CheckCircle size={14} weight="fill" style={{ color: "var(--accent)" }} />}
+                    <span className="ml-auto shrink-0">
+                      {formatDate(item.published_at)}
+                    </span>
+                    {added && (
+                      <CheckCircle
+                        size={14}
+                        weight="fill"
+                        style={{ color: "var(--accent)" }}
+                      />
+                    )}
                   </div>
                   <p
                     className="line-clamp-2 text-xs font-semibold leading-snug"
@@ -420,8 +534,12 @@ export function EvidenceSidebar() {
                     {item.title}
                   </p>
                   {item.engagement && (
-                    <p className="text-[10px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
-                      {item.engagement.likes} likes · {item.engagement.reposts} reposts
+                    <p
+                      className="text-[10px] tabular-nums"
+                      style={{ color: "var(--text-tertiary)" }}
+                    >
+                      {item.engagement.likes} likes · {item.engagement.reposts}{" "}
+                      reposts
                     </p>
                   )}
                 </button>

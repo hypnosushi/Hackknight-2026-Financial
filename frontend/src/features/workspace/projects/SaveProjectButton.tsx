@@ -21,7 +21,15 @@ export function SaveProjectButton() {
   const [name, setName] = useState(state.activeProjectName ?? "");
   const [status, setStatus] = useState<SaveStatus>("idle");
 
-  const canSave = Boolean(state.ticker && state.graph) && name.trim().length > 0;
+  // The button stays mounted while the user opens other projects from the rail, so the
+  // field is re-seeded from the active project each time the form opens: otherwise
+  // "Update project" would PUT the previous project's name onto this one.
+  useEffect(() => {
+    if (open) setName(state.activeProjectName ?? "");
+  }, [open, state.activeProjectName]);
+
+  const canSave =
+    Boolean(state.ticker && state.graph) && name.trim().length > 0;
 
   async function handleSave() {
     if (!state.ticker || !state.graph || !name.trim()) return;
@@ -99,7 +107,10 @@ export function SaveProjectButton() {
                 transition={{ duration: 0.16 }}
                 onClick={(e) => e.stopPropagation()}
                 className="w-full max-w-sm rounded-[var(--radius-panel)] p-5 shadow-xl"
-                style={{ background: "var(--surface-elevated)", border: "1px solid var(--border)" }}
+                style={{
+                  background: "var(--surface-elevated)",
+                  border: "1px solid var(--border)",
+                }}
               >
                 <div className="mb-3 flex items-center justify-between">
                   <h2
@@ -134,9 +145,14 @@ export function SaveProjectButton() {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && canSave && status !== "saving") handleSave();
+                    if (e.key === "Enter" && canSave && status !== "saving")
+                      handleSave();
                   }}
-                  placeholder={state.ticker ? `${state.ticker} thesis` : "Name this project"}
+                  placeholder={
+                    state.ticker
+                      ? `${state.ticker} thesis`
+                      : "Name this project"
+                  }
                   className="w-full rounded-[var(--radius-control)] px-3 py-2 text-sm outline-none"
                   style={{
                     background: "var(--surface)",
@@ -146,7 +162,11 @@ export function SaveProjectButton() {
                 />
 
                 {status === "error" && (
-                  <p className="mt-2 text-xs" style={{ color: "var(--status-negative)" }} role="alert">
+                  <p
+                    className="mt-2 text-xs"
+                    style={{ color: "var(--status-negative)" }}
+                    role="alert"
+                  >
                     Couldn't save — try again.
                   </p>
                 )}
@@ -156,7 +176,10 @@ export function SaveProjectButton() {
                     type="button"
                     onClick={() => setOpen(false)}
                     className="rounded-[var(--radius-control)] px-3.5 py-2 text-sm font-medium"
-                    style={{ color: "var(--text-secondary)", border: "1px solid var(--border)" }}
+                    style={{
+                      color: "var(--text-secondary)",
+                      border: "1px solid var(--border)",
+                    }}
                   >
                     Cancel
                   </button>
@@ -165,7 +188,10 @@ export function SaveProjectButton() {
                     onClick={handleSave}
                     disabled={!canSave || status === "saving"}
                     className="flex items-center gap-1.5 rounded-[var(--radius-control)] px-3.5 py-2 text-sm font-medium transition disabled:opacity-50"
-                    style={{ background: "var(--accent)", color: "var(--accent-contrast)" }}
+                    style={{
+                      background: "var(--accent)",
+                      color: "var(--accent-contrast)",
+                    }}
                   >
                     {status === "done" ? (
                       <>
