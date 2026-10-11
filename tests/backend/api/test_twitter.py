@@ -61,6 +61,23 @@ def test_search_tweets_returns_content_items():
     assert len(resp.json()) == 1
 
 
+def test_search_tweets_clamps_an_old_start_to_x_search_window():
+    gateway = FakeGateway(tweets=[SAMPLE_TWEET])
+    app.dependency_overrides[get_twitter_gateway] = lambda: gateway
+    client = TestClient(app)
+    try:
+        resp = client.get(
+            "/twitter/search",
+            params={"query": "#nvidia", "start": "2026-07-13T00:00:00Z", "end": "2026-10-11T00:00:00Z"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    [(_, start, end)] = gateway.calls
+    assert (end - start) == twitter_router.SEARCH_LOOKBACK
+
+
 def test_search_tweets_maps_non_retryable_error_to_400():
     error = TwitterApiError(code="400", message="bad query", retryable=False)
     app.dependency_overrides[get_twitter_gateway] = lambda: FakeGateway(error=error)
@@ -163,6 +180,25 @@ def test_classify_passes_explicit_start_and_end_to_the_gateway(monkeypatch):
     [(_, start, end)] = gateway.calls
     assert start.isoformat() == "2026-10-01T00:00:00+00:00"
     assert end.isoformat() == "2026-10-08T00:00:00+00:00"
+
+
+def test_classify_clamps_an_old_start_for_a_query_search(monkeypatch):
+    monkeypatch.setattr(twitter_router, "classify", _fake_classify)
+    gateway = FakeGateway(tweets=[BULLISH_TWEET])
+    app.dependency_overrides[get_twitter_gateway] = lambda: gateway
+    client = TestClient(app)
+    try:
+        resp = client.get(
+            "/twitter/classify",
+            params={"entity": "NVDA", "query": "nvidia",
+                    "start": "2026-07-13T00:00:00Z", "end": "2026-10-11T00:00:00Z"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    [(_, start, end)] = gateway.calls
+    assert (end - start) == twitter_router.SEARCH_LOOKBACK
 
 
 def test_classify_defaults_to_the_usual_lookback_without_start_or_end(monkeypatch):
