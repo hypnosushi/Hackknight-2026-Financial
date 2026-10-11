@@ -1,4 +1,5 @@
 import type { RelationshipType } from "../../../types/workspaceGraph";
+import { DIRECTION_COLOR, DIRECTION_LABEL } from "../../company-graph/labels";
 
 /**
  * Fixed categorical palette for edge/relationship coloring.
@@ -72,9 +73,12 @@ function EdgeSwatch({ rel }: { rel: RelationshipType }) {
 /** Fixed legend near the graph — color-coding here is never left for the user to infer. */
 export function GraphLegend({
   showBoardInterlock = false,
+  showHighlights = false,
   ticker = null,
 }: {
   showBoardInterlock?: boolean;
+  /** Whether any drawn company has a recent highlight (a colored node). */
+  showHighlights?: boolean;
   ticker?: string | null;
 }) {
   const items = showBoardInterlock ? ORDER : ORDER.filter((r) => r !== "board-interlock");
@@ -106,6 +110,30 @@ export function GraphLegend({
       <span className="text-[10px]" style={{ color: "var(--text-tertiary)" }}>
         Arrows point from seller to buyer
       </span>
+      {showHighlights && (
+        <>
+          <span
+            className="mt-1 text-[10px] font-semibold uppercase tracking-wider"
+            style={{ color: "var(--text-tertiary)" }}
+          >
+            Recent event
+          </span>
+          {(["may_benefit", "may_face_pressure"] as const).map((direction) => (
+            <div key={direction} className="flex items-center gap-2">
+              <span
+                className="h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ background: DIRECTION_COLOR[direction], boxShadow: `0 0 0 3px ${DIRECTION_COLOR[direction]}33` }}
+              />
+              <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
+                {DIRECTION_LABEL[direction].replace(/^./, (c) => c.toUpperCase())}
+              </span>
+            </div>
+          ))}
+          <span className="text-[10px]" style={{ color: "var(--text-tertiary)" }}>
+            Click a colored company for the event
+          </span>
+        </>
+      )}
     </div>
   );
 }
