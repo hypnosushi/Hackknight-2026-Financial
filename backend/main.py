@@ -14,7 +14,7 @@ from company_graph import api as company_graph_api  # noqa: E402
 # The Vite dev server (frontend/, port 5173) calls this API on port 8000, a different origin.
 FRONTEND_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
-app = FastAPI(title="Hack Knight 2026 — Financial Signals API")
+app = FastAPI(title="Ripple API")
 
 errors.install(app)
 

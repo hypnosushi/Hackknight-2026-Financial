@@ -11,7 +11,7 @@ export default function AppLayout() {
       >
         <div className="flex items-center gap-4">
           <Link to="/" className="font-semibold" style={{ color: "var(--text-primary)" }}>
-            Financial Signals
+            Ripple
           </Link>
         </div>
         <div className="flex items-center gap-4">

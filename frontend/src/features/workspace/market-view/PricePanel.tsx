@@ -12,7 +12,7 @@ interface PricePanelProps {
   color: string;
   /** Extra chart children from OverlayChart's public `children` prop. */
   children?: ReactNode;
-  /** Pixel height; the default suits sharing the view with the odds panel. */
+  /** Minimum pixel height; the panel grows past it when the chart has spare room. */
   height?: number;
 }
 
@@ -39,7 +39,7 @@ export function PricePanel({ stock, domain, color, children, height = 180 }: Pri
   const data = stock.points.map((p) => ({ t: p.t, price: p.rawValue }));
   const { domainY, ticksY } = priceAxis(data.map((d) => d.price));
   return (
-    <div aria-label={`${stock.label} price`} className="w-full" style={{ height }}>
+    <div aria-label={`${stock.label} price`} className="w-full" style={{ flex: `5 1 ${height}px`, minHeight: height }}>
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data} margin={{ ...PANEL_MARGIN, top: TIP_HEADROOM }} {...TIME_SYNC}>
           <CartesianGrid stroke="var(--border)" vertical={false} />

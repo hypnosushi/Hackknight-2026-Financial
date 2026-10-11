@@ -27,7 +27,7 @@ export function RelationshipPanel({
   const muted = { color: "var(--text-tertiary)" };
 
   return (
-    <section aria-label="Stock and odds relationship" className="flex flex-col gap-2">
+    <section aria-label="Stock and odds relationship" className="flex flex-1 flex-col gap-2">
       <div className="flex flex-wrap items-center justify-between gap-2 px-1">
         <h4 className="text-xs font-medium uppercase tracking-wide" style={muted}>
           Rolling correlation (SPY-adjusted stock return vs odds change)
@@ -63,7 +63,11 @@ export function RelationshipPanel({
         </p>
       ) : (
         <>
-          <div aria-label="Rolling correlation chart" className="w-full" style={{ height: chartHeight }}>
+          <div
+            aria-label="Rolling correlation chart"
+            className="w-full"
+            style={{ flex: `1 1 ${chartHeight}px`, minHeight: chartHeight }}
+          >
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart
                 data={result.rolling.map((p) => ({ t: p.t, r: p.r, band: [p.lo, p.hi] }))}

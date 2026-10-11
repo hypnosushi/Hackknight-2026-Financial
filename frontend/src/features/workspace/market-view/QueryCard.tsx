@@ -1,5 +1,5 @@
 import { Gauge, MagicWand } from "@phosphor-icons/react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { ApiError } from "../../../lib/apiClient";
 import { MAX_ITEMS, runEvidenceQuery, type QueryMode } from "../../../lib/api/classification";
 import type { QueryResult } from "../../../types/project";
@@ -10,7 +10,7 @@ import { useWorkspace } from "../useWorkspace";
  * added evidence set. Per the design spec this renders as a single stat
  * (percentage + n), not a chart — a quick gut-check, most recent result first.
  */
-export function QueryCard() {
+export function QueryCard({ action }: { action?: ReactNode }) {
   const { state, dispatch } = useWorkspace();
   const [query, setQuery] = useState("");
   const [isRunning, setIsRunning] = useState(false);
@@ -105,6 +105,8 @@ export function QueryCard() {
             Classifying {Math.min(state.evidence.length, MAX_ITEMS)} items — this can take a while…
           </span>
         )}
+        {/* Right end of this row: an action owned by the page (the save button), so it scrolls with the card instead of floating over it. */}
+        {action && <div className="ml-auto">{action}</div>}
       </div>
 
       {error && (

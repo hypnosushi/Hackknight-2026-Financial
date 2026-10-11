@@ -11,7 +11,7 @@ interface OddsPanelProps {
   colorById: Map<string, string>;
   /** Show date labels here when no panel below carries them. */
   showTimeAxis?: boolean;
-  /** Pixel height of the plot. */
+  /** Minimum pixel height; the panel grows past it when the chart has spare room. */
   height?: number;
   /** Zoom the y-axis to the data instead of the full 0-100%, so small moves are visible. */
   fit?: boolean;
@@ -52,7 +52,7 @@ export function OddsPanel({
   const labelById = new Map(markets.map((m) => [m.id, m.label]));
 
   return (
-    <div aria-label="Market odds" className="w-full" style={{ height }}>
+    <div aria-label="Market odds" className="w-full" style={{ flex: `4 1 ${height}px`, minHeight: height }}>
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data} margin={{ ...PANEL_MARGIN, top: 0 }} {...TIME_SYNC}>
           <CartesianGrid stroke="var(--border)" vertical={false} />
