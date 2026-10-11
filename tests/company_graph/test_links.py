@@ -263,12 +263,13 @@ def test_reads_only_the_right_filings(engine):
     model = FakeModel()
     run(engine, sec, model=model)
     read = sec.archive_urls()
-    assert sorted(read) == sorted({TEN_K, DEAL_8K, PLAIN_8K, ALB_10K, PRIVATE_10K})
-    assert OLD_TEN_K not in read and OLD_8K not in read  # older 10-K, 8-K older than 90 days
+    # The two newest annual reports (ANNUAL_REPORTS) are read; an 8-K older than 90 days is not.
+    assert sorted(read) == sorted({TEN_K, OLD_TEN_K, DEAL_8K, PLAIN_8K, ALB_10K, PRIVATE_10K})
+    assert OLD_8K not in read
     # Own hit and the duplicate accession (exhibit) are not read; the 8-K without a deal is read but not extracted.
     assert ("Tesla, Inc.", "Apple Inc.") not in model.calls
     keys = {r.accession_number for r in rows(engine, GraphProcessedFiling)}
-    assert keys == {"0001628280-26-003952", "0001628280-26-020000", "0001628280-26-020001",
+    assert keys == {"0001628280-26-003952", "0001628280-25-000001", "0001628280-26-020000", "0001628280-26-020001",
                     "0000915913-26-000010#TSLA", "0000000123-26-000001#TSLA"}
 
 
@@ -295,7 +296,7 @@ def test_run_after_ttl_reads_no_filing_twice(engine):
     result = run(engine, again, now=NOW + timedelta(days=8))
     assert result.status == "done" and not result.skipped
     assert again.archive_urls() == []           # every filing was recorded as read
-    assert result.filings_skipped == 5
+    assert result.filings_skipped == 6
     assert len(rows(engine, EntityRelationship)) == before  # links from the first run stay
 
 
@@ -548,7 +549,7 @@ def test_foreign_issuer_own_20f_is_read(engine):
     sec = Sec(subs=subs)
     result = run(engine, sec)
     assert result.status == "done"
-    assert TEN_K in sec.archive_urls() and OLD_TEN_K not in sec.archive_urls()  # newest annual report only
+    assert TEN_K in sec.archive_urls()  # the foreign annual form is treated like a 10-K
     assert ("PCRFY", "supplier") in {(l.symbol, l.type) for l in stored_links(engine)}
 
 

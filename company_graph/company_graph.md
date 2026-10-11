@@ -37,6 +37,7 @@ Not built yet: demo commands (F11).
 - **Pair news (F13, `pair_news.py`):** `GET /graph/{ticker}/news/{other}` searches NewsAPI (`"A" AND "B"`, 30 days) and X (both names, 7 days) once per pair, keeps what Jev says is about the two together (title plus the article's opening text), and caches it per pair in `.cache/company_graph/pair_cache.json`. It answers only for companies linked in the stored graph. The page shows it on a linked company's panel.
 - **Sync calls:** `llm.complete`, `extract.extract` and Jev are synchronous. Call them through `asyncio.to_thread`.
 - **Saving:** every save function flushes and leaves the commit to the caller. The exception is `build_links`, which commits as it goes so pollers see progress: give it its own session.
+- **Pre-building for hops:** `uv run python -m company_graph.prebuild [TICKERS] [--neighbors NVDA] [--force]` runs link builds sequentially for a list (default: the seed S&P companies in `backend/entities/data/sp500_top50.json`), so the workspace hop slider has a second ring without on-demand builds during a demo. Each run reads the two newest annual reports (`ANNUAL_REPORTS`) plus recent 8-Ks.
 - **Reading links (F5):** call `links.read_links(session, symbol, cfg.graph_max_linked)`, never a plain `entity_symbol = symbol` query. Reverse-lookup links are stored from the other company's side and `read_links` flips them.
 - **Run status (F5):** a timeout ends `done` with what was saved. A run that saved no filing link and hit any failure (SEC, search or the model) ends `error`, even if industry peers were saved, so an outage is not cached for the TTL. A `running` row older than 10 minutes counts as crashed.
 - **Which filings are read (F5):** the reverse search keeps one filing per other company and reads the 10 largest companies first. Size is the company's position in SEC's `company_tickers.json`, which SEC orders largest first (`CompanyDirectory.size_rank`). SEC's own order favours small companies that depend on the searched one.
@@ -74,7 +75,7 @@ NEWSAPI_KEY=...                      # news events (F6); without it highlights u
 ALPACA_API_KEY_ID=...                # optional: price_change_pct on highlights (F8)
 ALPACA_API_SECRET_KEY=...
 # Optional, defaults in config.py:
-# GRAPH_LINK_TTL_DAYS=7  GRAPH_EVENT_WINDOW_DAYS=7  GRAPH_MAX_LINKED=12
+# GRAPH_LINK_TTL_DAYS=7  GRAPH_EVENT_WINDOW_DAYS=7  GRAPH_MAX_LINKED=20
 # GRAPH_NEWS_TTL_HOURS=6  GRAPH_NEWS_DAILY_BUDGET=40  GRAPH_FAKE=0  GRAPH_LLM_MODEL=...
 # GRAPH_BOARD_TTL_DAYS=7  GRAPH_BOARD_MAX_FILINGS=40
 ```

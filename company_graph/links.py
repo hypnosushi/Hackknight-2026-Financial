@@ -9,7 +9,7 @@ One run, for the searched company S:
      (no network call, not even the company directory when the ticker is given exactly).
      Otherwise mark it `running` and commit, so a poller sees it.
   2. One `list_filings` call (annual reports and 8-Ks) gives S's SIC code, saved to
-     `graph_company_profiles`, its latest annual report and its 8-Ks from the last 90 days.
+     `graph_company_profiles`, its ANNUAL_REPORTS newest annual reports and its 8-Ks from the last 90 days.
      Annual reports are ANNUAL_FORMS: 10-K, plus 20-F and 40-F from foreign companies listed
      in the US (TSMC, for example), which never file a 10-K.
   3. Own annual report: `trim_by_phrases`, then the companies named in each chunk (US-listed names
@@ -87,6 +87,7 @@ REVERSE_TOP_HITS = 10
 INDUSTRY_PEERS = 3                 # largest same-industry companies added next to filing links
 INDUSTRY_PEERS_GRACE_S = 10.0      # time allowed for the industry list even after the run's budget
 MAX_EIGHT_KS = 10                  # most recent 8-Ks read per run
+ANNUAL_REPORTS = 2                 # newest annual reports read per run: last year's names partners this year's dropped
 MAX_SUBJECTS_PER_FILING = 12       # companies asked about per own filing (most mentioned first)
 MAX_CHUNKS_PER_PAIR = 2            # passages sent to the model per (filer, subject) pair
 MAX_PARALLEL_MODEL_CALLS = 8
@@ -514,8 +515,7 @@ class _LinkRun:
     async def _own_jobs(self, filings) -> list[_Job]:
         jobs: list[_Job] = []
         annual = [f for f in filings if f.form.upper() in ANNUAL_FORMS and f.url]
-        if annual:
-            f = annual[0]  # newest first
+        for f in annual[:ANNUAL_REPORTS]:  # newest first
             jobs.append(_Job(f.accession_number, f.accession_number, self.company.cik, f.form, f.url,
                              "own10k", self.company))
         since = self.today - timedelta(days=EIGHT_K_LOOKBACK_DAYS)

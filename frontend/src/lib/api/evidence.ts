@@ -157,31 +157,32 @@ export async function fetchCandidateTweets(
   }
 }
 
-// News deliberately excludes the most recent 30 days: only older articles are offered as evidence.
-const NEWS_EXCLUDE_RECENT_DAYS = 30;
-const NEWS_LOOKBACK_DAYS = 90;
+// NewsAPI's free plan reaches back one month, so the window is the last 30 days (the design spec's
+// "older than 30 days only" rule can't be served on this plan and was dropped). Bounds are aligned
+// to whole UTC days so every call in a day hits the same backend cache row (backend/evidence).
+const NEWS_LOOKBACK_DAYS = 30;
 
-/** GET /evidence/news — candidate news older than 30 days; same fallback policy as tweets. */
+function startOfUtcDay(ms: number): number {
+  const d = new Date(ms);
+  d.setUTCHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+/** GET /evidence/news — candidate news from the last 30 days; same fallback policy as tweets. */
 export async function fetchCandidateNews(
   ticker: string,
   range?: DateRange,
   filters?: NewsFilters,
 ): Promise<ContentItem[]> {
   if (!ticker.trim()) return []; // nothing to search for yet; NewsAPI calls are metered
-  const now = Date.now();
-  const cutoff = now - NEWS_EXCLUDE_RECENT_DAYS * 86_400_000;
-  const start = range?.start ?? new Date(now - NEWS_LOOKBACK_DAYS * 86_400_000).toISOString();
-  // Cap the window's end at the cutoff so the backend never returns the excluded period.
-  const end = new Date(Math.min(cutoff, range ? Date.parse(range.end) : cutoff)).toISOString();
+  const today = startOfUtcDay(Date.now());
+  const end = range?.end ?? new Date(today + 86_400_000).toISOString();
+  const start = range?.start ?? new Date(today - NEWS_LOOKBACK_DAYS * 86_400_000).toISOString();
   try {
     const items = await get<ContentItem[]>(
       `/evidence/news?ticker=${encodeURIComponent(ticker)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
     );
-    // Belt and braces: filter again in case the backend's mock fallback ignores the window.
-    return applyNewsFilters(
-      items.filter((item) => Date.parse(item.published_at) <= cutoff),
-      filters,
-    );
+    return applyNewsFilters(items, filters);
   } catch (error) {
     warnFallback("GET /evidence/news", error);
     return applyNewsFilters(await mockCandidateNews(ticker), filters);

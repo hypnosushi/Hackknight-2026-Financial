@@ -14,7 +14,7 @@ from backend.llm.client import DEFAULT_MODEL
 class Config:
     graph_link_ttl_days: float = 7       # how long stored links are reused before a rebuild
     graph_event_window_days: float = 7   # how far back highlights look
-    graph_max_linked: int = 12           # most linked companies per graph
+    graph_max_linked: int = 20           # most linked companies per graph (10-Ks name 15-30; hop 2 needs the breadth)
     graph_news_ttl_hours: float = 6      # how long one company's news result is reused
     graph_news_daily_budget: int = 40    # most NewsAPI requests this feature may make per day
     graph_board_ttl_days: float = 7      # how long a stored board is reused before a rebuild

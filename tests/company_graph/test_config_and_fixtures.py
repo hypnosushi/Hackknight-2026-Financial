@@ -22,7 +22,7 @@ def clean_env(monkeypatch):
 
 def test_defaults_match_the_spec(clean_env):
     cfg = config.load()
-    assert (cfg.graph_link_ttl_days, cfg.graph_event_window_days, cfg.graph_max_linked) == (7, 7, 12)
+    assert (cfg.graph_link_ttl_days, cfg.graph_event_window_days, cfg.graph_max_linked) == (7, 7, 20)
     assert (cfg.graph_news_ttl_hours, cfg.graph_news_daily_budget) == (6, 40)
     assert cfg.fake is False
     assert cfg.graph_llm_model == DEFAULT_MODEL

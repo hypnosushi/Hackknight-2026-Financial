@@ -9,9 +9,10 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from backend.api.deps import get_news_gateway
-from backend.entities import EntityAlias, load_entities
-from backend.ingestion.news_api import ContentItem, NewsApiError, NewsApiGateway, NewsQueryFilters, poll_news
+from backend.api.deps import get_news_gateway, get_news_store
+from backend.evidence.news import news_for
+from backend.evidence.news_cache import NewsStore
+from backend.ingestion.news_api import ContentItem, NewsApiError, NewsApiGateway
 
 router = APIRouter(prefix="/evidence", tags=["evidence"])
 logger = logging.getLogger(__name__)
@@ -19,14 +20,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_LOOKBACK = timedelta(days=30)
 MOCK_ARTICLE_COUNT = 6
 MOCK_MARKER = "[MOCK]"
-
-
-def _aliases_for(ticker: str) -> EntityAlias:
-    """Seed-list entry for the ticker, or a bare entry so unknown tickers still search."""
-    for entity in load_entities():
-        if entity.symbol.upper() == ticker:
-            return entity
-    return EntityAlias(symbol=ticker)
 
 
 def _mock_news(ticker: str, start: datetime, end: datetime) -> list[ContentItem]:
@@ -50,12 +43,18 @@ def _mock_news(ticker: str, start: datetime, end: datetime) -> list[ContentItem]
 
 
 @router.get("/news", response_model=list[ContentItem])
-def get_news(
+async def get_news(
     ticker: str,
     start: datetime | None = Query(default=None),
     end: datetime | None = Query(default=None),
     gateway: NewsApiGateway | None = Depends(get_news_gateway),
+    store: NewsStore | None = Depends(get_news_store),
 ) -> list[ContentItem]:
+    """News mentioning the ticker (or its aliases) in the window, newest first. Answered from the
+    news cache when the same day-bucketed window was fetched before; `python -m backend.evidence`
+    pre-fills it for the demo tickers. Mock items (titles marked [MOCK]) only when there is no
+    key, or NewsAPI fails and nothing is cached for the ticker.
+    """
     ticker = ticker.strip().upper()
     if not ticker:
         raise HTTPException(status_code=400, detail="ticker is required")
@@ -64,17 +63,9 @@ def get_news(
 
     if gateway is None:
         return _mock_news(ticker, start, end)
-
-    entity = _aliases_for(ticker)
-    # Search the ticker plus company aliases; quoted so multi-word names stay phrases.
-    terms = [ticker, *entity.aliases]
-    filters = NewsQueryFilters(
-        boolean_terms="(" + " OR ".join(f'"{t}"' for t in terms) + ")",
-        from_time=start,
-        to_time=end,
-    )
     try:
-        return poll_news(filters, gateway, [entity])
+        items, _ = await news_for(ticker, start, end, gateway, store)
+        return items
     except NewsApiError as exc:
         # A demo shouldn't break on a rate limit or bad key; log and degrade.
         logger.warning("NewsAPI failed (%s); serving mock news", exc)

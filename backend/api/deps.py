@@ -13,8 +13,10 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from backend.classification.sentiment_cache import PostgresSentimentStore, SentimentStore
+from backend.evidence.news_cache import NewsStore, PostgresNewsStore
 from backend.ingestion.common.db import make_engine
 from backend.models.base import Base
+from backend.models.news_cache import NewsCache
 from backend.models.sentiment_cache import SentimentCache
 
 from backend.ingestion.alpaca import AlpacaApiGateway
@@ -104,3 +106,26 @@ async def get_sentiment_store() -> SentimentStore | None:
         _sentiment_store_failed_at = time.monotonic()
         return None
     return _sentiment_store
+
+
+_news_store: NewsStore | None = None
+_news_store_failed_at = 0.0
+
+
+async def get_news_store() -> NewsStore | None:
+    """The news cache, or None when there's no usable database (the route then fetches live every time)."""
+    global _news_store, _news_store_failed_at
+    if _news_store is not None:
+        return _news_store
+    if time.monotonic() - _news_store_failed_at < SENTIMENT_STORE_RETRY_S:
+        return None
+    try:
+        engine = await get_db_engine()
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all, tables=[NewsCache.__table__])
+        _news_store = PostgresNewsStore(async_sessionmaker(engine, expire_on_commit=False))
+    except Exception as exc:  # noqa: BLE001 - no DATABASE_URL or an unreachable database
+        logger.warning("News cache unavailable (%s); fetching news uncached", exc)
+        _news_store_failed_at = time.monotonic()
+        return None
+    return _news_store
