@@ -1,8 +1,17 @@
-import type { ChartRange, NormalizedSeries } from "../../types/market";
+import type { ChartRange, NormalizedPoint, NormalizedSeries } from "../../types/market";
 import { get } from "../apiClient";
 import { alignAndNormalize, type RawPoint, type RawSeries } from "../chart/align";
 
 const DAY_MS = 86_400_000;
+const HOUR_MS = 3_600_000;
+/**
+ * A market younger than this is sampled at one-minute bars (the 1D range) for the correlation,
+ * whatever range is displayed. The relationship needs 25 return pairs, and a pair only forms where
+ * a stock bar and a market candle share a timestamp; at the hourly interval of 1W and 1M that is
+ * about 7 pairs per session, so a market needs about four sessions (a week) before hourly pairs
+ * can say anything. One session at one-minute bars gives hundreds.
+ */
+export const YOUNG_MARKET_MS = 7 * DAY_MS;
 /** Window length per range; "all" is open-ended (the market's whole life), so it isn't trimmed. */
 const RANGE_DAYS: Record<ChartRange, number> = { "1d": 1, "1w": 7, "1m": 30, "6m": 182, "1y": 365, all: Number.POSITIVE_INFINITY };
 /** Mock data needs a finite window; "all" mocks a year. */
@@ -46,16 +55,35 @@ function toRawPoints(rows: SeriesRow[]): RawPoint[] {
 interface HistoryResponse {
   interval: string; // '1m' | '1h' | '1d'
   available_ranges: string[]; // upper-case, e.g. ["1D", "1W", "ALL"]
-  market: { t: number; close: number }[]; // t: Unix seconds; close: probability 0-1
-  stock: { t: number; close: number }[]; // close: USD
+  // t: Unix seconds; close: probability 0-1 (market) or USD (stock); volume: contracts (Kalshi) or
+  // shares (Alpaca) traded in the candle, null for venues without one (Polymarket); older backends omit it.
+  market: { t: number; close: number; volume?: number | null }[];
+  stock: { t: number; close: number; volume?: number | null }[];
+  open_time?: string; // ISO 8601: when the market opened on its venue (older backends omit it)
+  window_end?: string; // ISO 8601: where the window ended (a weekend 1D snaps to Friday)
+}
+
+/** "3 hours", "2 days": a market's age, for the chart's notes. */
+export function describeAge(ms: number): string {
+  if (ms < HOUR_MS) return "under an hour";
+  if (ms < DAY_MS) {
+    const h = Math.round(ms / HOUR_MS);
+    return `${h} hour${h === 1 ? "" : "s"}`;
+  }
+  const d = Math.round(ms / DAY_MS);
+  return `${d} day${d === 1 ? "" : "s"}`;
 }
 
 /** Seconds -> ms, and the venue's 0-1 probability -> the chart's 0-100 odds. */
 function historyMarketPoints(h: HistoryResponse): RawPoint[] {
-  return h.market.map((p) => ({ t: p.t * 1000, value: p.close * 100 }));
+  return h.market.map((p) => historyPoint(p.t, p.close * 100, p.volume));
 }
 function historyStockPoints(h: HistoryResponse): RawPoint[] {
-  return h.stock.map((p) => ({ t: p.t * 1000, value: p.close }));
+  return h.stock.map((p) => historyPoint(p.t, p.close, p.volume));
+}
+/** A null/absent volume stays absent (not 0): the chart shows no bar, not an empty one. */
+function historyPoint(seconds: number, value: number, volume: number | null | undefined): RawPoint {
+  return volume == null ? { t: seconds * 1000, value } : { t: seconds * 1000, value, volume };
 }
 
 /** Ranges every selected market can show. A range is only offered if no market is "too new" for it. */
@@ -63,12 +91,6 @@ export function commonRanges(responses: HistoryResponse[]): ChartRange[] | null 
   if (responses.length === 0) return null;
   const sets = responses.map((r) => new Set(r.available_ranges.map((x) => x.toLowerCase())));
   return (Object.keys(RANGE_DAYS) as ChartRange[]).filter((range) => sets.every((set) => set.has(range)));
-}
-
-/** Deterministic pseudo-random in [0, 1) so mock data doesn't jitter between renders. */
-function hash(n: number): number {
-  const x = Math.sin(n * 12.9898) * 43758.5453;
-  return x - Math.floor(x);
 }
 
 /** Mock stock: weekday closes only (like a real exchange), so the gaps over weekends are realistic. */
@@ -86,22 +108,26 @@ function mockStockPoints(range: ChartRange, seed: number, end: number, startPric
   return points;
 }
 
-/** Mock market: irregular trade times, odds only change when someone trades. */
-function mockMarketPoints(range: ChartRange, seed: number): RawPoint[] {
-  const end = Date.now();
-  const points: RawPoint[] = [];
-  let odds = 42;
-  let t = end - MOCK_DAYS[range] * DAY_MS;
-  for (let i = 0; t < end; i += 1) {
-    odds = Math.min(99, Math.max(1, odds + Math.sin(seed + i * 0.6) * 3));
-    points.push({ t, value: Math.round(odds) });
-    t += (2 + hash(seed * 100 + i) * 20) * 3_600_000; // 2-22h between trades
-  }
-  return points;
-}
-
 function marketFallbackLabel(id: string): string {
   return id.replace(/^KX-?/, "").replace(/-/g, " ");
+}
+
+export interface MarketMeta {
+  /** When the market opened on its venue (epoch ms); null when the history route didn't say. */
+  openTime: number | null;
+}
+
+/**
+ * Series the correlation is computed from when they differ from the displayed ones: a young
+ * market's last session at one-minute bars (see YOUNG_MARKET_MS).
+ */
+export interface CorrelationInput {
+  stock: NormalizedPoint[];
+  benchmark: NormalizedPoint[] | null;
+  market: NormalizedPoint[];
+  interval: string; // '1m' | '1h' | '1d'
+  /** One sentence for the panel on why this sampling was used. */
+  reason: string;
 }
 
 export interface SeriesBundle {
@@ -111,6 +137,19 @@ export interface SeriesBundle {
   benchmark: NormalizedSeries | null;
   /** Ranges every selected market has history for; null when none came from the history route. */
   availableRanges: ChartRange[] | null;
+  /** Sampling interval of the displayed series ('1m' | '1h' | '1d'); null when no history route answered. */
+  interval: string | null;
+  /**
+   * The window the range asked for, [start, end] in ms: the backend's window end and the
+   * range's length back from it ("all": from the earliest point). The chart's x-axis spans
+   * this, not the data, so 1D is a day and 1W a week even where the stock has no bars.
+   * Null when no history route answered (the legacy routes don't say where their window ended).
+   */
+  window: [number, number] | null;
+  /** Per market id: what the history route said about the market itself. */
+  markets: Record<string, MarketMeta>;
+  /** Per market id: a finer-sampled set of series for the correlation, only for markets that need one. */
+  correlation: Record<string, CorrelationInput>;
 }
 
 /** Convenience wrapper for callers that only need the displayed series. */
@@ -125,8 +164,10 @@ export async function fetchNormalizedSeries(
 
 /**
  * Stock + market series (+ SPY benchmark) for the overlay chart, aligned and normalized.
- * Each upstream call falls back to a deterministic mock on failure so the
- * chart keeps working before/without the backend routes.
+ * A market's odds are only ever the venue's own history, fetched live by the backend (Kalshi
+ * candlesticks, Polymarket price history). A market with none comes back empty and the chart
+ * says so; it never draws a made-up line. The stock and SPY still fall back to a mock walk
+ * when Alpaca can't be reached.
  */
 export async function fetchSeriesBundle(
   ticker: string,
@@ -147,7 +188,7 @@ export async function fetchSeriesBundle(
 
   // Preferred path, one call per market: the market's candles AND the stock's bars at the same
   // interval and window, so the two lines are sampled on the same clock. A market the route
-  // can't serve (Polymarket, not in the DB, too new for this range, backend down) falls back.
+  // can't serve (not in the DB, too new for this range, backend down) falls back.
   const histories = await Promise.all(
     marketIds.map((id) =>
       get<HistoryResponse>(
@@ -157,6 +198,14 @@ export async function fetchSeriesBundle(
   );
   const firstHistory = histories.find((h): h is HistoryResponse => h !== null) ?? null;
   const availableRanges = commonRanges(histories.filter((h): h is HistoryResponse => h !== null));
+  const marketMeta: Record<string, MarketMeta> = {};
+  histories.forEach((h, i) => {
+    if (!h) return;
+    const open = h.open_time ? Date.parse(h.open_time) : NaN;
+    marketMeta[marketIds[i]] = { openTime: Number.isFinite(open) ? open : null };
+  });
+  // Started now so it runs alongside the stock and SPY fetches below.
+  const correlation = fineCorrelationInputs(ticker, marketIds, marketMeta, range, now, endParam, wantBenchmark);
 
   const stockPoints: Promise<RawPoint[]> = firstHistory
     ? Promise.resolve(historyStockPoints(firstHistory))
@@ -181,12 +230,13 @@ export async function fetchSeriesBundle(
   const marketPoints = marketIds.map((id, idx) => {
     const history = histories[idx];
     if (history) return Promise.resolve(historyMarketPoints(history));
-    return get<SeriesRow[]>(`/markets/${encodeURIComponent(id)}/series?range=${LEGACY_SERIES_RANGE[range]}`)
+    // mock=false: without it this route answers with a generated series when Kalshi has nothing.
+    return get<SeriesRow[]>(`/markets/${encodeURIComponent(id)}/series?range=${LEGACY_SERIES_RANGE[range]}&mock=false`)
       .then(toRawPoints)
-      .catch(() => mockMarketPoints(range, idx + 2));
+      .catch((): RawPoint[] => []);
   });
 
-  const [stock, benchmark, ...markets] = await Promise.all([stockPoints, benchmarkPoints, ...marketPoints]);
+  const [stock, benchmark, fine, ...markets] = await Promise.all([stockPoints, benchmarkPoints, correlation, ...marketPoints]);
 
   // Trim the stock to the range relative to its newest point (not "now"), so stale data still shows.
   const stockEnd = stock.reduce((max, p) => Math.max(max, p.t), 0);
@@ -211,5 +261,76 @@ export async function fetchSeriesBundle(
   ];
   const aligned = alignAndNormalize(raw);
   const benchmarkSeries = wantBenchmark ? aligned.find((s) => s.id === BENCHMARK_TICKER) ?? null : null;
-  return { series: aligned.filter((s) => s !== benchmarkSeries), benchmark: benchmarkSeries, availableRanges };
+  return {
+    series: aligned.filter((s) => s !== benchmarkSeries),
+    benchmark: benchmarkSeries,
+    availableRanges,
+    interval: firstHistory?.interval ?? null,
+    window: requestedWindow(firstHistory, range, aligned),
+    markets: marketMeta,
+    correlation: fine,
+  };
+}
+
+function requestedWindow(history: HistoryResponse | null, range: ChartRange, series: NormalizedSeries[]): [number, number] | null {
+  const end = history?.window_end ? Date.parse(history.window_end) : NaN;
+  if (!Number.isFinite(end)) return null;
+  if (range === "all") {
+    const first = Math.min(...series.flatMap((s) => (s.points.length > 0 ? [s.points[0].t] : [])));
+    return Number.isFinite(first) && first < end ? [first, end] : null;
+  }
+  return [end - RANGE_DAYS[range] * DAY_MS, end];
+}
+
+/**
+ * For each market younger than YOUNG_MARKET_MS while a coarser range is shown: its last session
+ * at one-minute bars (the 1D range), with the stock and SPY on the same clock, aligned for the
+ * correlation. SPY is fetched once: the 1D window is the same for every market. A market whose
+ * 1D history can't be read is left out and the panel falls back to the displayed series.
+ */
+async function fineCorrelationInputs(
+  ticker: string,
+  marketIds: string[],
+  meta: Record<string, MarketMeta>,
+  range: ChartRange,
+  now: number,
+  endParam: string,
+  wantBenchmark: boolean,
+): Promise<Record<string, CorrelationInput>> {
+  const out: Record<string, CorrelationInput> = {};
+  if (range === "1d") return out;
+  const young = marketIds.filter((id) => {
+    const open = meta[id]?.openTime;
+    return open !== null && open !== undefined && now - open < YOUNG_MARKET_MS;
+  });
+  if (young.length === 0) return out;
+
+  const fineOf = (id: string, symbol: string) =>
+    get<HistoryResponse>(
+      `/markets/${encodeURIComponent(id)}/history?stock=${encodeURIComponent(symbol)}&range=1D${endParam}`,
+    ).catch(() => null);
+  const [spy, ...histories] = await Promise.all([
+    wantBenchmark ? fineOf(young[0], BENCHMARK_TICKER) : Promise.resolve(null),
+    ...young.map((id) => fineOf(id, ticker)),
+  ]);
+
+  young.forEach((id, i) => {
+    const h = histories[i];
+    if (!h || h.stock.length === 0) return;
+    const raw: RawSeries[] = [
+      { id: ticker, label: ticker, kind: "stock", unit: "usd", points: historyStockPoints(h) },
+      ...(spy ? [{ id: BENCHMARK_TICKER, label: BENCHMARK_TICKER, kind: "stock", unit: "usd", points: historyStockPoints(spy) } as RawSeries] : []),
+      { id, label: id, kind: "market", unit: "probability", points: historyMarketPoints(h) },
+    ];
+    const aligned = alignAndNormalize(raw);
+    const age = describeAge(now - (meta[id].openTime as number));
+    out[id] = {
+      stock: aligned[0].points,
+      benchmark: spy ? aligned[1].points : null,
+      market: aligned[aligned.length - 1].points,
+      interval: h.interval,
+      reason: `Sampled at ${h.interval} bars over the last session: this market opened ${age} ago, too young for ${range} bars to give enough return pairs.`,
+    };
+  });
+  return out;
 }

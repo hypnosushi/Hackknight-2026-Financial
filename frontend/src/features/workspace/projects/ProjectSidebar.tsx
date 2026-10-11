@@ -1,7 +1,7 @@
 import { CaretRight, Plus, PushPin, PushPinSlash } from "@phosphor-icons/react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { createProject, listProjects } from "../../../lib/api/projects";
+import { createProject, deleteProject, listProjects } from "../../../lib/api/projects";
 import type { Project } from "../../../types/project";
 import { useWorkspace } from "../useWorkspace";
 import { ProjectTab } from "./ProjectTab";
@@ -73,6 +73,14 @@ export function ProjectSidebar() {
     // etc. included), so no extra getProject() round-trip is needed before
     // restoring the workspace.
     dispatch({ type: "PROJECT_LOADED", project });
+  }
+
+  async function handleDelete(project: Project) {
+    await deleteProject(project.id); // a failure propagates to the row, which shows it
+    setProjects((prev) => prev.filter((p) => p.id !== project.id));
+    // The open workspace was this project's: back to the ticker prompt, so a
+    // later save can't try to update a row that no longer exists.
+    if (project.id === state.activeProjectId) dispatch({ type: "RESET" });
   }
 
   function cancelCreate() {
@@ -224,6 +232,7 @@ export function ProjectSidebar() {
             active={project.id === state.activeProjectId}
             expanded={showText}
             onSelect={() => handleSelect(project)}
+            onDelete={() => handleDelete(project)}
           />
         ))}
       </div>

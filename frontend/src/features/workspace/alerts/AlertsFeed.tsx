@@ -176,10 +176,16 @@ export function AlertsFeed() {
         onClick={() => setOpen(true)}
         aria-label={`Open live alerts (${count} in the last hour)`}
         aria-expanded={open}
-        // Once a search starts, a w-80 sidebar (markets, then evidence) owns the right edge; sit just left of it.
+        // Once a search starts, a sidebar (markets, then evidence) owns the right edge; sit just left of it.
+        // The sidebars are resizable and publish their width as a CSS variable (ResizableAside), so this
+        // follows the edge as it's dragged. 20rem is their default width, for before one has mounted.
         // In market view the chart header (view tabs, day stepper, range) runs along the top, so drop below it.
-        className={`absolute z-20 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold shadow-sm ${state.stage === "empty" ? "right-4" : "right-[21rem]"} ${state.stage === "market-view" ? "top-[4.75rem]" : "top-4"}`}
+        className={`absolute z-20 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold shadow-sm ${state.stage === "market-view" ? "top-[4.75rem]" : "top-4"}`}
         style={{
+          right:
+            state.stage === "empty"
+              ? "1rem"
+              : `calc(var(${state.stage === "market-view" ? "--evidence-sidebar-width" : "--markets-sidebar-width"}, 20rem) + 1rem)`,
           background: "var(--surface)",
           border: "1px solid var(--border)",
           color: "var(--text-primary)",

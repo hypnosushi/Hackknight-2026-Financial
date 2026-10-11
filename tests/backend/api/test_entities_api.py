@@ -84,7 +84,14 @@ def top_client(monkeypatch):
         calls["tiers"], calls["limit"] = tiers, limit
         return [{"source": "kalshi", "market_id": "KXA100-1", "event_id": "KXA100", "title": "A100 price?",
                  "outcome_label": "Above $0.50", "event_title": "NVIDIA A100", "close_time": None, "url": None,
-                 "tier": 1, "matched": ["NVDA", "Semiconductors"], "event_key": "KXA100"}]
+                 "tier": 1, "matched": ["NVDA", "Semiconductors"], "event_key": "KXA100"},
+                {"source": "kalshi", "market_id": "KXH200-DEC", "event_id": "KXH200", "title": "H200 price?",
+                 "outcome_label": "Above $1.50", "event_title": "NVIDIA H200", "close_time": None, "url": None,
+                 "tier": 1, "matched": ["NVDA"], "event_key": "KXH200"}]
+
+    async def only_traded(markets, now=None):
+        calls["checked"] = [m["market_id"] for m in markets]
+        return [m for m in markets if m["market_id"] != "KXH200-DEC"]  # H200 never traded
 
     def match_tags(tags, entity_map):
         semis = MapEntity(symbol="Semiconductors", name="Semiconductors", category="sector")
@@ -93,6 +100,7 @@ def top_client(monkeypatch):
     for name, fn in [("get_entity", get_entity), ("graph_links", graph_links), ("top_markets", top_markets)]:
         monkeypatch.setattr(entities.db, name, fn)
     monkeypatch.setattr(entities, "match_tags", match_tags)
+    monkeypatch.setattr(entities, "only_traded", only_traded)
     app.dependency_overrides[entities.get_db_engine] = lambda: None
     test_client = TestClient(app)
     test_client.calls = calls
@@ -103,11 +111,18 @@ def top_client(monkeypatch):
 def test_top_markets_ranks_company_then_links_then_tags(top_client):
     body = top_client.get("/entities/NVDA/top-markets", params=[("tags", "microchips"), ("tags", "banana")]).json()
     assert top_client.calls["tiers"] == {"NVDA": 1, "TSM": 2, "Semiconductors": 3}
-    assert top_client.calls["limit"] == 3
+    assert top_client.calls["limit"] == 3 * entities.TRADED_OVERSAMPLE  # extra rows, since untraded ones are dropped
+    assert [m["market_id"] for m in body["markets"]] == ["KXA100-1"]  # the untraded H200 market is left out
     assert [(t["input"], t["id"], t["source"]) for t in body["tags"]] == [
         ("microchips", "Semiconductors", "tag"), (None, "TSM", "graph")]
     assert body["unmatched_tags"] == ["banana"]
     assert body["markets"][0]["tier"] == 1 and body["markets"][0]["matched"] == ["NVDA", "Semiconductors"]
+
+
+def test_untraded_markets_stay_when_asked(top_client):
+    body = top_client.get("/entities/NVDA/top-markets", params={"traded": "false", "limit": 1}).json()
+    assert top_client.calls["limit"] == 1 and "checked" not in top_client.calls
+    assert [m["market_id"] for m in body["markets"]] == ["KXA100-1"]
 
 
 def test_top_markets_needs_a_company(top_client):

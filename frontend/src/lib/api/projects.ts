@@ -1,4 +1,4 @@
-import { ApiError, get, post, put } from "../apiClient";
+import { ApiError, del, get, post, put } from "../apiClient";
 import type { Project, ProjectInput } from "../../types/project";
 
 /** GET /projects — most recently updated first. */
@@ -19,6 +19,11 @@ export async function getProject(id: string): Promise<Project | null> {
 /** POST /projects — the backend assigns the id and timestamps. */
 export function createProject(input: ProjectInput): Promise<Project> {
   return post<Project>("/projects", input);
+}
+
+/** DELETE /projects/:id — permanent; resolves on 204. */
+export function deleteProject(id: string): Promise<void> {
+  return del(`/projects/${encodeURIComponent(id)}`);
 }
 
 /** PUT /projects/:id — full replace of the editable fields. */

@@ -59,6 +59,33 @@ describe("EVIDENCE_REMOVED", () => {
   });
 });
 
+describe("MARKET_SWAPPED", () => {
+  const card = (id: string) => ({
+    marketId: id, title: "What will Jensen say?", category: null, thumbnailUrl: "", seriesTitle: null, closeTime: null,
+  });
+  const base = {
+    ...initialWorkspaceState,
+    suggestedMarkets: [card("AI"), card("OTHER")],
+    selectedMarketIds: ["AI", "OTHER"],
+  };
+
+  it("replaces the market in place in both the cards and the selection", () => {
+    const next = workspaceReducer(base, { type: "MARKET_SWAPPED", marketId: "AI", market: card("TSM") });
+    expect(next.suggestedMarkets.map((m) => m.marketId)).toEqual(["TSM", "OTHER"]);
+    expect(next.selectedMarketIds).toEqual(["TSM", "OTHER"]);
+  });
+
+  it("swapping to a market that is already selected just drops the old one", () => {
+    const next = workspaceReducer(base, { type: "MARKET_SWAPPED", marketId: "AI", market: card("OTHER") });
+    expect(next.suggestedMarkets.map((m) => m.marketId)).toEqual(["OTHER"]);
+    expect(next.selectedMarketIds).toEqual(["OTHER"]);
+  });
+
+  it("is a no-op for the same market", () => {
+    expect(workspaceReducer(base, { type: "MARKET_SWAPPED", marketId: "AI", market: card("AI") })).toBe(base);
+  });
+});
+
 describe("GRAPH_EXPANDED", () => {
   const graph = {
     nodes: [
@@ -156,6 +183,77 @@ describe("chart day cursor", () => {
     ).toBeNull();
     expect(
       workspaceReducer(initialWorkspaceState, { type: "CHART_DAY_RESET" }),
+    ).toBe(initialWorkspaceState);
+  });
+});
+
+describe("GRAPH_LOADED", () => {
+  const node = (id: string, isCenter = false) => ({
+    id,
+    label: id,
+    kind: "company" as const,
+    isCenter,
+  });
+  const graph = (ids: string[], highlights: never[] = []) => ({
+    nodes: [node("NVDA", true), ...ids.map((id) => node(id))],
+    edges: [],
+    highlights,
+  });
+  const searching = workspaceReducer(initialWorkspaceState, {
+    type: "TICKER_SUBMITTED",
+    ticker: "NVDA",
+  });
+  const loaded = (
+    state: typeof searching,
+    ids: string[],
+    linksDone: boolean,
+    highlights: never[] = [],
+  ) =>
+    workspaceReducer(state, {
+      type: "GRAPH_LOADED",
+      ticker: "NVDA",
+      graph: graph(ids, highlights),
+      status: "running",
+      linksDone,
+    });
+
+  it("is still loading while links can arrive", () => {
+    const next = loaded(searching, ["TSM"], false);
+    expect(next.graphStatus).toBe("loading");
+    expect(next.graphNewsRunning).toBe(false);
+  });
+
+  it("is done once the links are in, even though the news run keeps the backend 'running'", () => {
+    const next = loaded(searching, ["TSM"], true);
+    expect(next.graphStatus).toBe("done");
+    expect(next.graphNewsRunning).toBe(true);
+  });
+
+  it("takes only the highlights from later responses, keeping companies merged in since", () => {
+    const done = loaded(searching, ["TSM", "AMD"], true);
+    const highlight = { target_symbol: "TSM" } as never;
+    const next = loaded(done, ["TSM"], true, [highlight]);
+    expect(next.graph?.nodes.map((n) => n.id)).toEqual(["NVDA", "TSM", "AMD"]);
+    expect(next.graph?.highlights).toEqual([highlight]);
+  });
+});
+
+describe("BACK_TO_GRAPH", () => {
+  it("returns to the graph and keeps the markets, range and evidence", () => {
+    const inMarketView = {
+      ...initialWorkspaceState,
+      stage: "market-view" as const,
+      ticker: "NVDA",
+      selectedMarketIds: ["KXFED-26DEC"],
+      evidence: [annotation("a")],
+    };
+    const next = workspaceReducer(inMarketView, { type: "BACK_TO_GRAPH" });
+    expect(next).toEqual({ ...inMarketView, stage: "graph-ready" });
+  });
+
+  it("does nothing outside the market view", () => {
+    expect(
+      workspaceReducer(initialWorkspaceState, { type: "BACK_TO_GRAPH" }),
     ).toBe(initialWorkspaceState);
   });
 });

@@ -434,7 +434,7 @@ export function EvidenceSidebar() {
       </p>
 
       {loading ? (
-        <ul className="flex flex-col gap-1.5" aria-label="Loading">
+        <ul className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] content-start gap-1.5" aria-label="Loading">
           {[0, 1, 2, 3].map((i) => (
             <li
               key={i}
@@ -462,7 +462,7 @@ export function EvidenceSidebar() {
           Nothing matched. Loosen the filters or change the search.
         </p>
       ) : (
-        <ul className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto pr-1">
+        <ul className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] content-start min-h-0 flex-1 gap-1.5 overflow-y-auto pr-1">
           {list.map((item) => {
             const added = addedIds.has(item.id);
             const sentiment = sentiments.get(item.id);

@@ -42,7 +42,7 @@ export function DayStepper({ windowEnd }: { windowEnd: number | null }) {
         type="button"
         onClick={() => dispatch({ type: "CHART_DAY_SHIFTED", days: -1 })}
         aria-label="Previous day"
-        title="Previous day (or drag the chart to the right)"
+        title="Previous day"
         className={button}
         style={{ color: "var(--text-secondary)" }}
       >
@@ -64,7 +64,7 @@ export function DayStepper({ windowEnd }: { windowEnd: number | null }) {
         onClick={() => dispatch({ type: "CHART_DAY_SHIFTED", days: 1 })}
         disabled={atNow}
         aria-label="Next day"
-        title="Next day (or drag the chart to the left)"
+        title="Next day"
         className={button}
         style={{ color: "var(--text-secondary)" }}
       >

@@ -31,6 +31,15 @@ def test_range_to_interval_mapping():
     assert RANGE_CONFIG["3m"][0].days == 90
 
 
+def test_route_without_mock_is_404_when_kalshi_has_nothing():
+    client = _client_with(_fail)
+    try:
+        response = client.get("/markets/KXFED-26DEC-T4/series", params={"range": "1w", "mock": "false"})
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 404
+
+
 def test_route_falls_back_to_deterministic_mock():
     client = _client_with(_fail)
     try:

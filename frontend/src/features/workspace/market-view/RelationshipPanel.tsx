@@ -1,5 +1,5 @@
 import { Area, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, YAxis } from "recharts";
-import { describeLeadLag, MIN_PAIRS, type RelationshipResult } from "../../../lib/chart/relationship";
+import { describeLeadLag, type RelationshipResult } from "../../../lib/chart/relationship";
 import type { NormalizedSeries } from "../../../types/market";
 import { AXIS_TICK, PANEL_MARGIN, TOOLTIP_STYLE, Y_AXIS_WIDTH, formatTooltipDate } from "./panelCommon";
 import { TimeAxis } from "./TimeAxis";
@@ -7,6 +7,10 @@ import { TIP_HEADROOM, TimelineAnnotations } from "./TimelineAnnotations";
 
 interface RelationshipPanelProps {
   result: RelationshipResult | null; // null = no market selected
+  /** How the correlation was sampled when that differs from the displayed series (a young market). */
+  sampling?: string | null;
+  /** Why there aren't enough pairs, when there aren't. */
+  detail?: string | null;
   markets: NormalizedSeries[];
   selectedId: string | null;
   onSelect: (id: string) => void;
@@ -17,6 +21,8 @@ interface RelationshipPanelProps {
 
 export function RelationshipPanel({
   result,
+  sampling = null,
+  detail = null,
   markets,
   selectedId,
   onSelect,
@@ -59,10 +65,15 @@ export function RelationshipPanel({
         </p>
       ) : result.status === "insufficient" ? (
         <p className="px-1 text-sm" style={muted}>
-          Not enough overlapping data ({result.pairs} of {MIN_PAIRS} needed return pairs). Try a longer range.
+          Not enough overlapping data{detail ? `: ${detail}` : "."}
         </p>
       ) : (
         <>
+          {sampling && (
+            <p className="px-1 text-xs" style={muted}>
+              {sampling}
+            </p>
+          )}
           <div
             aria-label="Rolling correlation chart"
             className="w-full"

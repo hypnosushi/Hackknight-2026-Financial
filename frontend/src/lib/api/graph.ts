@@ -119,6 +119,12 @@ export interface GraphUpdate {
   graph: CompanyGraph;
   /** "running" means more links may still arrive; "error" can still come with partial links. */
   status: GraphStatus;
+  /**
+   * True once every link is in. The backend keeps answering "running" while
+   * it then checks recent news for the graph's companies, which adds
+   * highlights but no nodes; that can take minutes and isn't "loading".
+   */
+  linksDone: boolean;
 }
 
 /** Why a graph couldn't be fetched at all — the two cases read differently to the user. */
@@ -133,10 +139,16 @@ export type GraphFailure = "unknown-ticker" | "unavailable";
 export async function fetchCompanyGraph(
   ticker: string,
   attempt = 0,
+  linksOnly = false,
 ): Promise<GraphUpdate> {
   const symbol = ticker.trim().replace(/^\$/, "").toUpperCase();
-  const response = await fetchGraph(symbol, attempt);
-  return { graph: toWorkspaceGraph(response), status: response.status };
+  const response = await fetchGraph(symbol, attempt, linksOnly);
+  return {
+    graph: toWorkspaceGraph(response),
+    status: response.status,
+    // An older backend sends no links_status: fall back to the overall status.
+    linksDone: (response.links_status ?? response.status) !== "running",
+  };
 }
 
 /**
@@ -148,6 +160,10 @@ export async function fetchCompanyGraph(
  */
 // A full link run (SEC + the model) takes a minute or two; this is ~5 min at POLL_INTERVAL_MS.
 const GRAPH_MAX_POLLS = 200;
+// Once the links are in, only highlights can still change, and the news run behind them takes
+// minutes: poll slowly, and for at most ~10 min.
+const NEWS_POLL_INTERVAL_MS = 5000;
+const NEWS_MAX_POLLS = 120;
 
 export function pollCompanyGraph(
   ticker: string,
@@ -155,16 +171,30 @@ export function pollCompanyGraph(
     onUpdate: (update: GraphUpdate) => void;
     onFailure: (reason: GraphFailure) => void;
   },
+  /** Skip the news run: for hop expansion, which only needs each company's links. */
+  linksOnly = false,
 ): () => void {
   let cancelled = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
+  // Set once a response says every link is in. From then on the graph on screen is complete,
+  // so a failed or abandoned poll is not a failure to load it: the polling just stops.
+  let linksDone = false;
+  let newsPolls = 0;
+
   const poll = async (attempt: number) => {
     try {
-      const update = await fetchCompanyGraph(ticker, attempt);
+      const update = await fetchCompanyGraph(ticker, attempt, linksOnly);
       if (cancelled) return;
+      linksDone ||= update.linksDone;
       handlers.onUpdate(update);
       if (update.status !== "running") return;
+      if (linksDone) {
+        newsPolls += 1;
+        if (newsPolls >= NEWS_MAX_POLLS) return;
+        timer = setTimeout(() => void poll(attempt + 1), NEWS_POLL_INTERVAL_MS);
+        return;
+      }
       if (attempt + 1 >= GRAPH_MAX_POLLS) {
         // A build stuck in "running" (a crashed backend task) shouldn't be polled forever.
         handlers.onFailure("unavailable");
@@ -172,7 +202,7 @@ export function pollCompanyGraph(
       }
       timer = setTimeout(() => void poll(attempt + 1), POLL_INTERVAL_MS);
     } catch (err) {
-      if (cancelled) return;
+      if (cancelled || linksDone) return;
       // 404 is the backend saying the ticker isn't a listed company; anything
       // else (503, a network failure) is the service itself being unreachable.
       handlers.onFailure(

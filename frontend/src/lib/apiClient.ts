@@ -22,9 +22,13 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     throw new ApiError(response.status, `${method} ${path} failed: ${response.statusText}`);
   }
 
+  // 204 No Content (a DELETE) has no body to parse.
+  if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
 
 export const get = <T>(path: string) => request<T>("GET", path);
 export const post = <T>(path: string, body: unknown) => request<T>("POST", path, body);
 export const put = <T>(path: string, body: unknown) => request<T>("PUT", path, body);
+/** `delete` is a reserved word, hence the name. */
+export const del = (path: string) => request<void>("DELETE", path);

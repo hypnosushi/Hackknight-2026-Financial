@@ -31,3 +31,12 @@ export function formatTooltipDate(t: number): string {
  * because the two panels have different numbers of points.
  */
 export const TIME_SYNC = { syncId: "price-odds-time", syncMethod: "value" as const };
+
+/**
+ * The volume strip's own y-axis, hidden: its scale is set by lib/chart/axes.ts
+ * volumeDomain so bars stay in the bottom quarter of the panel, under the line.
+ */
+export const VOLUME_AXIS = { yAxisId: "volume", orientation: "right" as const, hide: true };
+
+/** Muted bars (a trading-chart convention) that don't light up on hover: the line is the subject, volume the context. */
+export const VOLUME_BAR = { fillOpacity: 0.3, isAnimationActive: false, activeBar: false as const, maxBarSize: 14 };

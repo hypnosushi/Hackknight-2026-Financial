@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import type { AlertDirection, RecentAlert } from "../../../types/alert";
+import type { PredictionMarket } from "../../../types/predictionMarket";
 import { useRecentAlerts, type AlertsStatus } from "./useAlerts";
 
 /** Alerts newer than this feed the sidebar's live list, the bell, and the node flash. */
@@ -40,7 +41,7 @@ interface LiveAlerts {
    */
   reportCenterMove: (
     symbol: string | null,
-    direction: AlertDirection | null,
+    market: PredictionMarket | null,
   ) => void;
 }
 
@@ -55,12 +56,12 @@ export function LiveAlertsProvider({ children }: { children: ReactNode }) {
   const { alerts, status } = useRecentAlerts(LIVE_WINDOW_MINUTES);
   const [centerMove, setCenterMove] = useState<{
     symbol: string;
-    direction: AlertDirection;
+    market: PredictionMarket;
   } | null>(null);
 
   const reportCenterMove = useCallback(
-    (symbol: string | null, direction: AlertDirection | null) => {
-      setCenterMove(symbol && direction ? { symbol, direction } : null);
+    (symbol: string | null, market: PredictionMarket | null) => {
+      setCenterMove(symbol && market ? { symbol, market } : null);
     },
     [],
   );
@@ -77,23 +78,25 @@ export function LiveAlertsProvider({ children }: { children: ReactNode }) {
         });
     }
     if (centerMove && !flashBySymbol.has(centerMove.symbol)) {
+      // Not a detector alert, so it's built from the recommended market itself:
+      // the node card names the market that moved rather than a generic notice.
+      const { market } = centerMove;
+      const change = market.change24h ?? 0;
+      const direction: AlertDirection = change > 0 ? "yes_up" : "yes_down";
       const synthetic: RecentAlert = {
         id: -1,
         createdAt: new Date().toISOString(),
-        source: "recommended",
-        marketId: "",
-        title: "A recommended market moved sharply",
+        source: market.source,
+        marketId: market.id,
+        title: market.title,
         eventTitle: null,
-        url: null,
-        direction: centerMove.direction,
-        summary: "Large 24h move in a recommended market",
+        url: market.url ?? null,
+        direction,
+        summary: `Yes price ${change > 0 ? "up" : "down"} ${Math.abs(change)}¢ over the last 24h`,
         score: LARGE_MOVE_SCORE,
         companies: [],
       };
-      flashBySymbol.set(centerMove.symbol, {
-        direction: centerMove.direction,
-        alert: synthetic,
-      });
+      flashBySymbol.set(centerMove.symbol, { direction, alert: synthetic });
     }
     return { alerts, status, large, flashBySymbol, reportCenterMove };
   }, [alerts, status, centerMove, reportCenterMove]);

@@ -106,3 +106,11 @@ async def update_project(
     await session.commit()
     await session.refresh(project)
     return project
+
+
+@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_project(project_id: str, session: AsyncSession = Depends(get_session)) -> None:
+    """Permanent: a project is one row, with its evidence and graph snapshot inside it."""
+    project = await _get_or_404(session, project_id)
+    await session.delete(project)
+    await session.commit()

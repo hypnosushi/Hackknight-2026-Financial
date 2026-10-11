@@ -213,7 +213,7 @@ async def top_markets(engine: AsyncEngine, tiers: dict[str, int], limit: int) ->
     tags = union_all(*(select(literal(s).label("symbol"), literal(t).label("tier")) for s, t in tiers.items())).cte("tags")
     group_key = func.coalesce(Market.series_id, Market.event_id, Market.market_id).label("group_key")
     hits = (select(Market.source, Market.market_id, Market.event_id, Market.series_id, group_key, Market.title,
-                   Market.outcome_label, Market.event_title, Market.close_time, Market.url,
+                   Market.outcome_label, Market.event_title, Market.close_time, Market.url, Market.rules_primary,
                    func.min(tags.c.tier).label("tier"),
                    func.array_agg(MarketEntity.entity_symbol.distinct()).label("matched"))
             .select_from(tags)

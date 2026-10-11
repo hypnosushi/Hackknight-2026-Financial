@@ -76,13 +76,20 @@ async function fakeSearch(q: string): Promise<CompanySearchResponse> {
     .slice(0, 10);
 }
 
-/** GET /graph/{ticker}. `attempt` counts polls for this search (0 = first). */
+/**
+ * GET /graph/{ticker}. `attempt` counts polls for this search (0 = first).
+ * `linksOnly` asks the backend not to start a news run for this company, so
+ * the answer is "done" as soon as its links are.
+ */
 export function fetchGraph(
   ticker: string,
   attempt: number,
+  linksOnly = false,
 ): Promise<CompanyGraphResponse> {
   if (GRAPH_FAKE) return fakeGraph(ticker, attempt);
-  return get<CompanyGraphResponse>(`/graph/${encodeURIComponent(ticker)}`);
+  return get<CompanyGraphResponse>(
+    `/graph/${encodeURIComponent(ticker)}${linksOnly ? "?highlights=false" : ""}`,
+  );
 }
 
 /**

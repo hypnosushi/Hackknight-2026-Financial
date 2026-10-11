@@ -19,15 +19,16 @@ import { latestHighlightBySymbol } from "../../company-graph/highlights";
 import { DIRECTION_TOKEN } from "../../company-graph/labels";
 import { GraphLegend, RELATIONSHIP_COLORS } from "./GraphLegend";
 import { useLiveAlerts } from "../alerts/LiveAlertsProvider";
-import { DEFAULT_HOPS, HopFilter } from "./HopFilter";
+import { AddCompanyPicker } from "./AddCompanyPicker";
 import { NodeInfoCard } from "./NodeInfoCard";
+import { additionFor, relatedCandidates, type Candidate } from "./relatedCompanies";
 import {
-  companyHops,
   computeGraphLayout,
   moveCompany,
   targetForce,
   type GraphLayout,
   type Point,
+  initials,
 } from "./graphLayout";
 
 /** Reads a theme CSS variable at draw time so canvas-rendered nodes stay in sync
@@ -135,7 +136,7 @@ const LAYOUT_PULL = 0.12;
  * Self-gates on state.stage/state.graph so the parent page can mount it
  * unconditionally alongside <TickerInput /> (per the barrel's contract).
  */
-/** Linked companies whose graphs are fetched at once when the hop slider widens. */
+/** On-graph companies whose own graphs are fetched at once for the "Add company" list. */
 const EXPAND_CONCURRENCY = 2;
 
 export function GraphCanvas() {
@@ -170,6 +171,12 @@ export function GraphCanvas() {
     seats: [] as Seat[],
     /** The graph is complete and the people reveal has been scheduled. */
     finishing: false,
+    /**
+     * The first people reveal has run. Before it, a board that arrives just
+     * adds its seats and waits for that reveal; after it (boards of companies
+     * the hop slider brought in), a board reveals its own seats on arrival.
+     */
+    peopleRevealed: false,
     timers: [] as number[],
   });
   // Zoom scale right after the final fit — the baseline person labels are
@@ -184,54 +191,16 @@ export function GraphCanvas() {
   // stays put through its own fx/fy; this is kept so the move can be
   // re-applied to a layout that gets recomputed afterwards.
   const movedCompaniesRef = useRef(new Map<string, Point>());
-  // Hop filter. Hop counts come from the full graph, not what's been
-  // revealed so far, so they don't shift during the build-out.
-  const [maxHops, setMaxHops] = useState(DEFAULT_HOPS);
   // The node whose details card is open, by id — the node objects themselves
   // are mutated by the simulation, so they make poor state.
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const hops = useMemo(() => {
-    const graph = state.graph;
-    if (!graph) return new Map<string, number>();
-    const companies = graph.nodes.filter((n) => n.kind === "company");
-    const ids = new Set(companies.map((c) => c.id));
-    return companyHops(
-      companies,
-      graph.edges.filter((e) => ids.has(e.source) && ids.has(e.target)),
-    );
-  }, [state.graph]);
-
-  // What's actually drawn: `visible` narrowed by the hop filter. Filtering
-  // here, rather than removing nodes from `visible`, keeps every node object
-  // alive with its position, so widening the filter puts companies back
-  // exactly where they were (including ones the user dragged).
-  const shown = useMemo(() => {
-    // A company with no path to the center has no hop count, so the filter
-    // leaves it alone rather than hiding it at every setting.
-    const keep = new Set(
-      visible.nodes
-        .filter((n) => n.kind === "company" && (hops.get(n.id) ?? 0) <= maxHops)
-        .map((n) => n.id),
-    );
-    // A person stays while at least one of their companies does.
-    for (const e of visible.edges) {
-      if (e.relationship !== "board-interlock") continue;
-      if (keep.has(endId(e.source))) keep.add(endId(e.target));
-    }
-    return {
-      nodes: visible.nodes.filter((n) => keep.has(n.id)),
-      edges: visible.edges.filter(
-        (e) => keep.has(endId(e.source)) && keep.has(endId(e.target)),
-      ),
-    };
-  }, [visible, maxHops, hops]);
 
   // Memoized so an unrelated re-render doesn't hand ForceGraph2D a new
   // graphData object — it compares by identity and reheats the simulation
   // on every new one.
   const graphData = useMemo(
-    () => ({ nodes: shown.nodes, links: shown.edges }),
-    [shown],
+    () => ({ nodes: visible.nodes, links: visible.edges }),
+    [visible],
   );
 
   // The newest highlight per company: a company a recent event may affect is
@@ -247,71 +216,75 @@ export function GraphCanvas() {
   const { flashBySymbol } = useLiveAlerts();
   const flashRef = useRef(flashBySymbol);
   flashRef.current = flashBySymbol;
-  // Highlights pulse too, so the canvas must keep redrawing while either is on screen.
-  const hasFlashes = shown.nodes.some(
-    (n) => flashBySymbol.has(n.id) || highlightBySymbol.has(n.id),
-  );
+  // Only a live market move animates (news highlights are a steady color), so
+  // the canvas keeps redrawing just while one is on screen.
+  const hasFlashes = visible.nodes.some((n) => flashBySymbol.has(n.id));
 
-  // Hop expansion. The backend returns one company's direct links, so the
-  // outer hops are filled client-side: every company at hop < maxHops whose
-  // own graph hasn't been fetched gets fetched (polling while the backend
-  // builds it) and merged into state.graph. Each fetch may start a link run
-  // on the backend (SEC filings + an LLM pass, cached for 7 days), so this
-  // runs only when the slider asks for it, a couple of companies at a time,
-  // nearest ring first. `expanded` remembers companies already fetched for
-  // this graph session; `inflight` caps concurrency.
+  // The "Add company" list. The backend returns one company's direct links,
+  // so companies one step further out come from fetching each on-graph
+  // company's own graph (polling while the backend builds it). Those graphs
+  // are kept in a pool, never merged in wholesale: the user picks which
+  // company to add. Each fetch may start a link run on the backend (SEC
+  // filings + an LLM pass, cached for 7 days), so nothing is fetched until
+  // the list is first opened, and then a couple of companies at a time. The
+  // fetches ask for links only: a company's news run adds no companies.
+  // `poolVersion` re-renders the candidate list as graphs arrive; the pool
+  // itself is a ref because its callbacks outlive the renders that made them.
   const expansionRef = useRef({
-    expanded: new Set<string>(),
+    pool: new Map<string, CompanyGraph>(),
     inflight: new Map<string, () => void>(),
+    wanted: false,
   });
+  const [poolVersion, setPoolVersion] = useState(0);
   const [expandingCount, setExpandingCount] = useState(0);
   const graphDone = state.graphStatus !== "loading";
   useEffect(() => {
     const graph = state.graph;
-    const ticker = state.ticker;
-    if (!graph || !ticker || !graphDone || maxHops <= 1) return;
     const exp = expansionRef.current;
+    if (!graph || !graphDone || !exp.wanted) return;
     const frontier = graph.nodes
-      .filter((n) => n.kind === "company" && !n.isCenter)
-      .filter((n) => (hops.get(n.id) ?? Infinity) < maxHops)
-      .filter((n) => !exp.expanded.has(n.id) && !exp.inflight.has(n.id))
-      .sort((a, b) => (hops.get(a.id) ?? 0) - (hops.get(b.id) ?? 0));
+      .filter((n) => n.kind === "company")
+      .filter((n) => !exp.pool.has(n.id) && !exp.inflight.has(n.id))
+      .sort((a, b) => Number(!!b.isCenter) - Number(!!a.isCenter));
     for (const node of frontier) {
       if (exp.inflight.size >= EXPAND_CONCURRENCY) break;
-      const finish = () => {
+      const finish = (addition?: CompanyGraph) => {
         exp.inflight.get(node.id)?.();
         exp.inflight.delete(node.id);
-        exp.expanded.add(node.id);
+        exp.pool.set(node.id, addition ?? { nodes: [], edges: [] });
         setExpandingCount(exp.inflight.size);
+        setPoolVersion((n) => n + 1); // also frees the slot: this effect runs again
       };
       const stop = pollCompanyGraph(node.id, {
         onUpdate: ({ graph: addition, status }) => {
-          dispatch({ type: "GRAPH_EXPANDED", ticker, addition });
-          if (status !== "running") finish();
+          if (status !== "running") finish(addition);
         },
-        onFailure: finish, // a company whose graph can't be read just stays a leaf
-      });
+        onFailure: () => finish(), // a company whose graph can't be read just offers nothing
+      }, true);
       exp.inflight.set(node.id, stop);
     }
     setExpandingCount(exp.inflight.size);
-  }, [state.graph, state.ticker, graphDone, maxHops, hops, dispatch]);
+  }, [state.graph, graphDone, poolVersion]);
 
-  // Re-frame on whatever the filter leaves — but only once the build-out's
-  // own fit has happened, so this never fights the reveal animation.
-  useEffect(() => {
-    if (fitZoomRef.current === null) return;
-    const fit = window.setTimeout(
-      () => fgRef.current?.zoomToFit(600, ZOOM_FIT_FINAL_PADDING),
-      50,
-    );
-    const measure = window.setTimeout(() => {
-      fitZoomRef.current = fgRef.current?.zoom() ?? fitZoomRef.current;
-    }, 700);
-    return () => {
-      window.clearTimeout(fit);
-      window.clearTimeout(measure);
-    };
-  }, [maxHops]);
+  const candidates = useMemo(
+    () => (state.graph ? relatedCandidates(state.graph, expansionRef.current.pool) : []),
+    // poolVersion is the pool's change signal; the Map itself is mutated in place.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [state.graph, poolVersion],
+  );
+  const openPicker = () => {
+    if (expansionRef.current.wanted) return;
+    expansionRef.current.wanted = true;
+    setPoolVersion((n) => n + 1);
+  };
+  const addCandidate = (candidate: Candidate) => {
+    if (!state.ticker) return;
+    dispatch({
+      type: "GRAPH_EXPANDED",
+      ticker: state.ticker,
+      addition: additionFor(candidate, expansionRef.current.pool),
+    });
+  };
 
   // Measure the full-bleed container so the force graph fills it exactly.
   // containerEl is a callback-ref value (not a useRef), so this effect re-runs
@@ -355,23 +328,27 @@ export function GraphCanvas() {
   }, [graphMounted]);
 
   // Stage 1 — fetch the company graph, and keep polling while the backend is
-  // still building it. The stage stays "building-graph" for as long as a
-  // poll can be running (GRAPH_READY and tag generation both wait for a
-  // complete graph), so the cleanup only ever cancels a poll when the user
-  // has actually moved on: a new search, an opened project, a reset.
-  const building = state.stage === "building-graph";
+  // still building it. The cleanup only cancels a poll when the user has
+  // actually moved on: a new search, an opened project, a reset.
+  //
+  // Keyed on the graph session, not the stage: the poll outlives the build-out
+  // (the stage moves on once the links are in) to pick up the highlights from
+  // the news run that follows. A session starts a poll only when it begins in
+  // "building-graph", so an opened project never fetches.
+  const stageRef = useRef(state.stage);
+  stageRef.current = state.stage;
   useEffect(() => {
     const ticker = state.ticker;
-    if (!building || !ticker) return;
+    if (stageRef.current !== "building-graph" || !ticker) return;
     return pollCompanyGraph(ticker, {
-      onUpdate: ({ graph, status }) =>
-        dispatch({ type: "GRAPH_LOADED", ticker, graph, status }),
+      onUpdate: ({ graph, status, linksDone }) =>
+        dispatch({ type: "GRAPH_LOADED", ticker, graph, status, linksDone }),
       onFailure: (reason) => {
         setGraphFailure(reason);
         dispatch({ type: "GRAPH_STATUS", status: "error" });
       },
     });
-  }, [building, state.ticker, state.graphSession, dispatch]);
+  }, [state.ticker, state.graphSession, dispatch]);
 
   // A new graph (search, opened project, reset) starts a new build-out from
   // an empty canvas. Keyed on graphSession rather than on `state.graph`
@@ -388,13 +365,14 @@ export function GraphCanvas() {
     build.boards = new Map();
     build.seats = [];
     build.finishing = false;
+    build.peopleRevealed = false;
     fitZoomRef.current = null;
     layoutRef.current = EMPTY_LAYOUT;
     movedCompaniesRef.current.clear();
     expansionRef.current.inflight.forEach((stop) => stop());
-    expansionRef.current = { expanded: new Set(), inflight: new Map() };
+    expansionRef.current = { pool: new Map(), inflight: new Map(), wanted: false };
     setExpandingCount(0);
-    setMaxHops(DEFAULT_HOPS);
+    setPoolVersion(0);
     setSelectedId(null);
     setGraphFailure(null);
     setVisible({ nodes: [], edges: [] });
@@ -459,11 +437,14 @@ export function GraphCanvas() {
       }, ZOOM_FIT_FINAL_MS + 50);
     };
 
-    const revealPeople = () => {
+    // Bring `candidates` onto the canvas one at a time, each popping out of
+    // its company. Only seats of companies still in the graph are shown.
+    const revealPeople = (candidates: Seat[]) => {
       const current = build.graph;
       if (!current) return;
+      build.peopleRevealed = true;
       const ids = new Set(current.nodes.map((n) => n.id));
-      const seats = build.seats.filter((s) => ids.has(s.edge.source));
+      const seats = candidates.filter((s) => ids.has(s.edge.source));
       if (seats.length === 0) {
         later(fitCamera, SETTLE_PAUSE_MS * 2);
         return;
@@ -571,6 +552,10 @@ export function GraphCanvas() {
             if (seats.length === 0) return;
             build.seats.push(...seats);
             relayout();
+            // A board that lands after the first reveal (a company the hop
+            // slider added) would otherwise never be drawn: that reveal runs
+            // once, over the seats known at the time.
+            if (build.peopleRevealed) revealPeople(seats);
           })
           .catch(() => undefined), // a board that fails to load just leaves that company without people
       );
@@ -587,7 +572,7 @@ export function GraphCanvas() {
         () => {
           dispatch({ type: "GRAPH_READY" });
           Promise.all(build.boards.values()).then(() => {
-            if (build.token === token) revealPeople();
+            if (build.token === token) revealPeople(build.seats);
           });
         },
         Math.max(0, build.nextRevealAt - now) + SETTLE_PAUSE_MS,
@@ -601,21 +586,20 @@ export function GraphCanvas() {
     return <EmptyCanvas containerRef={setContainerEl} />;
   }
 
-  // Looked up among what's drawn, so hiding a node with the hop slider also
-  // closes its card.
-  const selectedNode = shown.nodes.find((n) => n.id === selectedId);
+  // Looked up among what's drawn, so a node the graph dropped also closes its card.
+  const selectedNode = visible.nodes.find((n) => n.id === selectedId);
   const selectedBoards =
     selectedNode?.kind === "person"
-      ? shown.edges
+      ? visible.edges
           .filter(
             (e) =>
               e.relationship === "board-interlock" &&
               endId(e.target) === selectedNode.id,
           )
-          .flatMap((e) => shown.nodes.filter((n) => n.id === endId(e.source)))
+          .flatMap((e) => visible.nodes.filter((n) => n.id === endId(e.source)))
       : [];
-  const hasPeople = shown.nodes.some((n) => n.kind === "person");
-  const hasHighlights = shown.nodes.some((n) => highlightBySymbol.has(n.id));
+  const hasPeople = visible.nodes.some((n) => n.kind === "person");
+  const hasHighlights = visible.nodes.some((n) => highlightBySymbol.has(n.id));
 
   return (
     <div
@@ -661,7 +645,9 @@ export function GraphCanvas() {
       {/* Progress and partial-failure notes while there's already a graph on
           screen — the backend returns the links it has before it's finished. */}
       {visible.nodes.length > 0 &&
-        (state.graphStatus !== "done" || state.graph?.nodes.length === 1) && (
+        (state.graphStatus !== "done" ||
+          state.graphNewsRunning ||
+          state.graph?.nodes.length === 1) && (
           <div
             className="absolute left-1/2 top-6 z-10 -translate-x-1/2 px-3 py-1.5 text-xs"
             role="status"
@@ -678,7 +664,9 @@ export function GraphCanvas() {
             {state.graphStatus === "error"
               ? `Some of ${state.ticker}'s relationships couldn't be loaded — showing what was found.`
               : state.graphStatus === "done"
-                ? `No relationships found for ${state.ticker}.`
+                ? state.graph?.nodes.length === 1
+                  ? `No relationships found for ${state.ticker}.`
+                  : "Checking recent news for these companies…"
                 : `Reading filings for ${state.ticker}…`}
           </div>
         )}
@@ -813,18 +801,17 @@ export function GraphCanvas() {
             }
 
             if (highlight) {
-              // A recent news event pulses in its direction's status color. A live move on the same
-              // node adds its neutral ring on top; the two never compete for the color channel.
-              const phase =
-                (Math.sin((performance.now() / 1600) * 2 * Math.PI) + 1) / 2;
+              // A recent news event is a steady halo in its direction's status color. Motion is
+              // reserved for prediction markets: a live move on the same node adds its pulsing
+              // neutral ring on top, so color always reads as news and a pulse as a market.
               const color = cssVar(
                 DIRECTION_TOKEN[highlight.direction],
                 highlight.direction === "may_benefit" ? "#16a34a" : "#dc2626",
               );
               ctx.beginPath();
-              ctx.arc(x, y, r + 3 + phase * 6, 0, 2 * Math.PI);
+              ctx.arc(x, y, r + 6, 0, 2 * Math.PI);
               ctx.fillStyle = color;
-              ctx.globalAlpha = 0.1 + phase * 0.2;
+              ctx.globalAlpha = 0.22;
               ctx.fill();
               ctx.globalAlpha = 1;
             }
@@ -864,10 +851,10 @@ export function GraphCanvas() {
               return;
 
             if (isPerson) {
-              // Lighter, smaller and secondary-colored than company names, and
-              // always horizontal. Each name goes on the side of its dot that
-              // faces away from the company, so names around a board spread
-              // outward instead of piling onto the company.
+              // Initials only (the full name is in the node card): lighter,
+              // smaller and secondary-colored than company names, and always
+              // horizontal. Each goes on the side of its dot that faces away
+              // from the company, so a ring's labels spread outward.
               const anchor = layoutRef.current.personAnchors.get(
                 String(node.id),
               ) ?? { x: 0, y: 0 };
@@ -876,7 +863,7 @@ export function GraphCanvas() {
               ctx.textAlign = onLeft ? "right" : "left";
               ctx.textBaseline = "middle";
               ctx.fillStyle = cssVar("--text-secondary", "#555");
-              ctx.fillText(node.label, onLeft ? x - r - 2 : x + r + 2, y);
+              ctx.fillText(initials(node.label), onLeft ? x - r - 2 : x + r + 2, y);
               return;
             }
 
@@ -917,28 +904,32 @@ export function GraphCanvas() {
         />
       )}
 
-      <HopFilter
-        value={maxHops}
-        onChange={setMaxHops}
-        expanding={expandingCount}
-      />
       {selectedNode && state.graph && (
         <NodeInfoCard
           node={selectedNode}
           graph={state.graph}
           boards={selectedBoards}
+          flash={flashBySymbol.get(String(selectedNode.id))}
           onClose={() => setSelectedId(null)}
         />
       )}
-      {/* Bottom-left so it clears the hop slider and node card stacked at the top-left. */}
+      {/* Bottom-left so it clears the node card at the top-left. */}
       <div className="absolute bottom-6 left-6 z-10">
         <GraphLegend
           showBoardInterlock={hasPeople}
           showHighlights={hasHighlights}
-          showFlashes={hasFlashes}
           ticker={state.ticker}
         />
       </div>
+      {/* Bottom-right, beside the market sidebar's live events. */}
+      {state.graph && (
+        <AddCompanyPicker
+          candidates={candidates}
+          reading={expandingCount}
+          onOpen={openPicker}
+          onAdd={addCandidate}
+        />
+      )}
     </div>
   );
 }

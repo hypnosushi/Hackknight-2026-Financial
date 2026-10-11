@@ -1,7 +1,10 @@
+import { useEffect, useRef } from "react";
+import { useLocation } from "react-router-dom";
 import { WorkspaceProvider } from "../features/workspace/WorkspaceProvider";
 import { TickerInput, GraphCanvas } from "../features/workspace/graph";
 import { PredictionMarketPanel } from "../features/workspace/graph/PredictionMarketPanel";
 import { useWorkspace } from "../features/workspace/useWorkspace";
+import { ResizableAside } from "../features/workspace/shared/ResizableAside";
 import {
   WorkspaceTransition,
   OverlayChart,
@@ -9,7 +12,10 @@ import {
   EvidenceDrawer,
   QueryCard,
 } from "../features/workspace/market-view";
-import { ProjectSidebar, SaveProjectButton } from "../features/workspace/projects";
+import {
+  ProjectSidebar,
+  SaveProjectButton,
+} from "../features/workspace/projects";
 import { AlertsFeed, LiveAlertsProvider } from "../features/workspace/alerts";
 
 /**
@@ -31,9 +37,12 @@ function GraphColumn() {
           <GraphCanvas />
         </div>
         {state.stage !== "empty" && (
-          <aside className="h-full w-80 shrink-0">
+          <ResizableAside
+            storageKey="workspace.marketsSidebarWidth"
+            widthVar="--markets-sidebar-width"
+          >
             <PredictionMarketPanel ticker={state.ticker} />
-          </aside>
+          </ResizableAside>
         )}
       </div>
     </div>
@@ -58,9 +67,12 @@ function MarketViewColumn() {
           </div>
         </div>
       </div>
-      <aside className="h-full w-80 shrink-0">
+      <ResizableAside
+        storageKey="workspace.evidenceSidebarWidth"
+        widthVar="--evidence-sidebar-width"
+      >
         <EvidenceSidebar />
-      </aside>
+      </ResizableAside>
     </div>
   );
 }
@@ -71,6 +83,19 @@ export function WorkspaceShell() {
   // consumed layout space, its collapsed/hover/pinned width changes would
   // shift this pane's horizontal center out from under the ticker input
   // and the pinned center node every time the rail opens or closes.
+  //
+  // The "Ripple" link in the header points at this page. Clicking it while
+  // already here changes nothing in the URL, but the router still records a
+  // navigation with a new `location.key`; that is the signal to start over at
+  // the ticker prompt. The first key (page load, arriving from a project page)
+  // is skipped so a fresh mount isn't reset twice.
+  const { state, dispatch } = useWorkspace();
+  const { key } = useLocation();
+  const firstKey = useRef(key);
+  useEffect(() => {
+    if (key !== firstKey.current) dispatch({ type: "RESET" });
+  }, [key, dispatch]);
+
   return (
     <div className="relative h-full w-full">
       <WorkspaceTransition
@@ -80,7 +105,10 @@ export function WorkspaceShell() {
       />
       <ProjectSidebar />
       <EvidenceDrawer />
-      <AlertsFeed />
+      {/* The live-alerts bell belongs to the graph stages: in the market view the
+          chart and evidence sidebar are the focus, and the bell's panel would
+          cover the evidence picker. */}
+      {state.stage !== "market-view" && <AlertsFeed />}
     </div>
   );
 }

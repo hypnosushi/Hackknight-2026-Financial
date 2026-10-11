@@ -35,6 +35,8 @@ export interface WorkspaceState {
   ticker: string | null;
   graph: CompanyGraph | null;
   graphStatus: AsyncStatus;
+  /** The graph's links are all in, and the backend is still checking recent news for highlights. */
+  graphNewsRunning: boolean;
   tags: string[];
   tagsStatus: AsyncStatus;
   suggestedMarkets: import("./market").MarketCard[];
@@ -88,6 +90,7 @@ export const initialWorkspaceState: WorkspaceState = {
   ticker: null,
   graph: null,
   graphStatus: "idle",
+  graphNewsRunning: false,
   tags: [],
   tagsStatus: "idle",
   suggestedMarkets: [],

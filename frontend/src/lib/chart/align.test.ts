@@ -21,14 +21,14 @@ describe("alignAndNormalize", () => {
     expect(m.points.map((p) => [p.t, p.rawValue])).toEqual([[1, 40], [2, 40], [3, 50]]);
   });
 
-  it("restricts the grid to the stock's window and seeds from the last earlier trade", () => {
+  it("spans the union of the series: trades outside the stock's hours still draw, and the stock holds through them", () => {
     const [s, m] = alignAndNormalize([
       stock([[10, 100], [20, 100]]),
-      market([[1, 30], [5, 40], [15, 45], [99, 80]]),
+      market([[5, 40], [15, 45], [30, 50]]),
     ]);
-    expect(s.points.map((p) => p.t)).toEqual([10, 15, 20]);
-    // baseline is the pre-window trade (40), not the first in-window one
-    expect(m.points.map((p) => p.value)).toEqual([0, 5, 5]);
+    // The stock starts at its own first bar (no back-fill) and holds its last close past it.
+    expect(s.points.map((p) => [p.t, p.rawValue])).toEqual([[10, 100], [15, 100], [20, 100], [30, 100]]);
+    expect(m.points.map((p) => [p.t, p.value])).toEqual([[5, 0], [10, 0], [15, 5], [20, 5], [30, 10]]);
   });
 
   it("starts a late market at its own first value instead of back-filling", () => {
@@ -36,9 +36,19 @@ describe("alignAndNormalize", () => {
     expect(m.points.map((p) => [p.t, p.value])).toEqual([[2, 0], [3, 5]]);
   });
 
-  it("returns an empty series when a market has no points in the window", () => {
-    const [, m] = alignAndNormalize([stock([[10, 100], [20, 101]]), market([[50, 60]])]);
+  it("returns an empty series when a market has no points at all", () => {
+    const [, m] = alignAndNormalize([stock([[10, 100], [20, 101]]), market([])]);
     expect(m.points).toEqual([]);
+  });
+
+  it("carries volume only on the grid step its bar ends on, never forward-filled", () => {
+    const [s, m] = alignAndNormalize([
+      { ...stock([[1, 100], [3, 101]]), points: [{ t: 1, value: 100, volume: 500 }, { t: 3, value: 101, volume: 700 }] },
+      market([[1, 40], [2, 45]]), // no volume feed at all (Polymarket)
+    ]);
+    expect(s.points.map((p) => [p.t, p.rawValue, p.volume])).toEqual([[1, 100, 500], [2, 100, undefined], [3, 101, 700]]);
+    expect(s.points[1]).not.toHaveProperty("volume"); // filled step: no key, not volume: 0
+    expect(m.points.every((p) => p.volume === undefined)).toBe(true);
   });
 
   it("handles unsorted input and no stock data", () => {

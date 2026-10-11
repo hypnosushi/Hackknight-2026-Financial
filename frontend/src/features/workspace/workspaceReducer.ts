@@ -21,6 +21,8 @@ export type WorkspaceAction =
       ticker: string;
       graph: CompanyGraph;
       status: GraphStatus;
+      /** Every link is in; a "running" status now only means the news run. */
+      linksDone: boolean;
     }
   | { type: "GRAPH_READY" } // graph complete and every company revealed
   | { type: "GRAPH_EXPANDED"; ticker: string; addition: CompanyGraph } // hop filter: a linked company's graph to merge in
@@ -30,10 +32,12 @@ export type WorkspaceAction =
   | { type: "MARKETS_LOADED"; markets: MarketCard[] }
   | { type: "MARKET_TOGGLED"; marketId: string }
   | { type: "MARKET_ADDED"; market: MarketCard }
+  | { type: "MARKET_SWAPPED"; marketId: string; market: MarketCard } // another outcome of the same event takes this market's place
   | { type: "RANGE_CHANGED"; range: ChartRange }
   | { type: "CHART_DAY_SHIFTED"; days: number } // +1 / -1 calendar day; forward of "now" clamps back to null
   | { type: "CHART_DAY_RESET" } // back to "now"
   | { type: "GENERATE_PRESSED" } // Stage 5 — slide transition into market-view
+  | { type: "BACK_TO_GRAPH" } // market-view -> the graph, keeping everything picked so far
   | { type: "EVIDENCE_ADDED"; annotation: EvidenceAnnotation }
   | { type: "EVIDENCE_REMOVED"; itemId: string } // by the tweet/article id, which is all the picker knows
   | { type: "EVIDENCE_PINNED"; annotationId: string | null }
@@ -78,9 +82,24 @@ export function workspaceReducer(
       // that was in flight when they opened a project or searched again.
       if (action.ticker !== state.ticker || state.stage === "market-view")
         return state;
+      const graphNewsRunning = action.status === "running" && action.linksDone;
+      // The links were already complete: this response can only bring highlights. Keep the graph
+      // in state, which may hold hop expansions merged in since, and take just the highlights.
+      if (state.graph && state.graphStatus !== "loading")
+        return {
+          ...state,
+          graph: { ...state.graph, highlights: action.graph.highlights },
+          graphNewsRunning,
+        };
+      // "running" is only "loading" while links can still arrive. The news run that follows
+      // takes minutes and adds no companies, so the graph is done as soon as its links are.
       const graphStatus =
-        action.status === "running" ? "loading" : action.status;
-      return { ...state, graph: action.graph, graphStatus };
+        action.status !== "running"
+          ? action.status
+          : action.linksDone
+            ? "done"
+            : "loading";
+      return { ...state, graph: action.graph, graphStatus, graphNewsRunning };
     }
 
     case "GRAPH_EXPANDED": {
@@ -135,6 +154,24 @@ export function workspaceReducer(
       };
     }
 
+    case "MARKET_SWAPPED": {
+      // In place, so the chart keeps the series' color and position: a swap is "show me the
+      // TSM answer instead of the AI answer", not a new selection. Swapping to a market that
+      // is already selected just drops the old one, rather than listing it twice.
+      const { marketId, market } = action;
+      if (marketId === market.marketId) return state;
+      const alreadyThere = state.selectedMarketIds.includes(market.marketId);
+      return {
+        ...state,
+        suggestedMarkets: state.suggestedMarkets.some((m) => m.marketId === market.marketId)
+          ? state.suggestedMarkets.filter((m) => m.marketId !== marketId)
+          : state.suggestedMarkets.map((m) => (m.marketId === marketId ? market : m)),
+        selectedMarketIds: alreadyThere
+          ? state.selectedMarketIds.filter((id) => id !== marketId)
+          : state.selectedMarketIds.map((id) => (id === marketId ? market.marketId : id)),
+      };
+    }
+
     case "MARKET_ADDED":
       return {
         ...state,
@@ -161,6 +198,13 @@ export function workspaceReducer(
 
     case "GENERATE_PRESSED":
       return { ...state, stage: "market-view" };
+
+    case "BACK_TO_GRAPH":
+      // Only the stage changes: the selected markets, range and evidence stay, so Generate
+      // returns to the same chart. "graph-ready" because the graph on screen is already built.
+      return state.stage === "market-view"
+        ? { ...state, stage: "graph-ready" }
+        : state;
 
     case "EVIDENCE_ADDED":
       if (state.evidence.some((e) => e.id === action.annotation.id))

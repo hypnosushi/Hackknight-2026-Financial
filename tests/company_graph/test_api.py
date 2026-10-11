@@ -468,7 +468,7 @@ def test_fake_mode_serves_fixtures_without_database_or_network(monkeypatch):
 
         unknown = client.get("/graph/ZZZZ").json()
         assert unknown == {"company": {"symbol": "ZZZZ", "name": "ZZZZ", "industry": None}, "status": "done",
-                           "nodes": [], "links": [], "highlights": []}
+                           "links_status": None, "nodes": [], "links": [], "highlights": []}
 
         hits = client.get("/companies/search", params={"q": "te"}).json()
         assert {"symbol": "TSLA", "name": "Tesla, Inc."} in hits
@@ -545,6 +545,15 @@ def test_highlights_run_at_most_once_per_news_ttl(engine):
         assert client.get("/graph/TSLA").json()["status"] == "running"
         wait_for_highlights_done()
     assert highlights.calls == ["TSLA", "TSLA"]
+
+
+def test_highlights_false_starts_no_highlight_run_and_is_done_at_once(engine):
+    seed_done(engine)
+    highlights = FakeHighlights()
+    with TestClient(make_app(db=SqliteDb(engine), highlights=highlights)) as client:
+        body = client.get("/graph/TSLA?highlights=false").json()
+    assert body["status"] == "done" and len(body["links"]) == 4
+    assert highlights.calls == []
 
 
 def test_failed_highlight_run_still_returns_done_links(engine):

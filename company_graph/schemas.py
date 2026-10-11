@@ -92,6 +92,10 @@ class PairNewsResponse(_Strict):
 class GraphResponse(_Strict):
     company: GraphCompanyOut
     status: RunStatus
+    # The link run's own status. `status` stays "running" while the news run that follows the links
+    # is going, so a client that only waits for links reads this: "done" here with "running" above
+    # means every link is in and only highlights may still arrive.
+    links_status: RunStatus | None = None
     nodes: list[NodeOut]
     links: list[LinkOut]
     highlights: list[HighlightOut]

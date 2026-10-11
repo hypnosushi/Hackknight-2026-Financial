@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from backend.api.deps import get_db_engine
+from backend.api.market_activity import only_traded
 from backend.classification import JevError
 from backend.enrichment import db
 from backend.enrichment.rerank import rerank
@@ -20,6 +21,10 @@ from backend.enrichment.tag_match import match_tags
 from backend.entities import load_entity_map
 
 router = APIRouter(prefix="/entities", tags=["entities"])
+
+# Without rerank, this many times `limit` are read from the database so that dropping the
+# untraded ones (most of a long-dated Kalshi series never trades) still fills the list.
+TRADED_OVERSAMPLE = 3
 
 Category = Literal["company", "country", "sector", "event", "resource", "person"]  # CATEGORIES's keys
 
@@ -87,6 +92,7 @@ class TopMarketOut(BaseModel):
     title: str | None
     outcome_label: str | None
     event_title: str | None
+    rules_primary: str | None = None  # the venue's resolution rule: what YES actually means
     close_time: datetime | None
     url: str | None
     tier: int  # 1 = tagged with the company, 2 = a linked company, 3 = one of the tags
@@ -104,11 +110,14 @@ class TopMarketsOut(BaseModel):
 @router.get("/{company_id}/top-markets", response_model=TopMarketsOut)
 async def top_markets(company_id: str, tags: list[str] = Query([], max_length=20),
                       limit: int = Query(3, ge=1, le=10), rerank_: bool = Query(False, alias="rerank"),
-                      candidates: int = Query(50, ge=1, le=200), engine: AsyncEngine = Depends(get_db_engine)):
+                      candidates: int = Query(50, ge=1, le=200), traded: bool = Query(True),
+                      engine: AsyncEngine = Depends(get_db_engine)):
     """The company's top markets: its own first, then linked companies', then the tags'.
     Free-text tags ("ev", "microchips") are matched to map entities, by one Jev call if needed.
     With `rerank=true`, the tag query's top `candidates` events are scored by Jev for how much
     they matter to the company, and only those scoring 0.5 or more are returned, best first.
+    With `traded` (the default) only markets that traded on their venue in the last week are
+    returned (market_activity): an open market nobody trades has nothing to chart.
     """
     company = await db.get_entity(engine, company_id)
     if company is None or company["type"] != "company":
@@ -131,7 +140,11 @@ async def top_markets(company_id: str, tags: list[str] = Query([], max_length=20
     by_symbol = {e.symbol: e for e in _MAP.entities}
     tag_out += [TagOut(input=None, id=s, name=by_symbol[s].name if s in by_symbol else s, category="company",
                        source="graph") for s in links]
-    markets = await db.top_markets(engine, tiers, candidates if rerank_ else limit)
+    markets = await db.top_markets(engine, tiers, candidates if rerank_ else limit * (TRADED_OVERSAMPLE if traded else 1))
+    if traded:
+        markets = await only_traded(markets)
+    if not rerank_:
+        markets = markets[:limit]
     if rerank_:
         related = [t.name for t in tag_out]
         try:

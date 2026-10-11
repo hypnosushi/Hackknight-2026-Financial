@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { motion } from "motion/react";
-import { Check, ImageBroken } from "@phosphor-icons/react";
+import { ArrowSquareOut, Check, ImageBroken } from "@phosphor-icons/react";
 import { useWorkspace } from "../useWorkspace";
 import { fetchSuggestedMarkets } from "../../../lib/api/markets";
 import type { MarketCard } from "../../../types/market";
@@ -130,6 +130,24 @@ export function MarketCardTile({ market, selected, index, onToggle }: MarketCard
         <p className="text-sm font-semibold leading-snug" style={{ color: "var(--text-primary)" }}>
           {market.title}
         </p>
+        {market.outcome && (
+          // The event's question is the title; this is the answer whose odds the market trades.
+          <p className="text-xs leading-snug" style={{ color: "var(--text-secondary)" }} title={market.rules ?? undefined}>
+            Odds of: <span style={{ color: "var(--text-primary)" }}>{market.outcome}</span>
+          </p>
+        )}
+        {market.url && (
+          <a
+            href={market.url}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()} // the card's own click toggles selection
+            className="mt-auto flex items-center gap-1 self-start text-xs"
+            style={{ color: "var(--text-tertiary)" }}
+          >
+            <ArrowSquareOut size={12} weight="bold" /> Open on the venue
+          </a>
+        )}
       </div>
     </motion.button>
   );

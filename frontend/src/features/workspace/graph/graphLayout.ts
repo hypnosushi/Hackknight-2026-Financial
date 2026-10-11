@@ -16,19 +16,6 @@ export interface GraphLayout {
 
 // Spacing between neighbouring people around a company, in graph units.
 const PERSON_SPACING = 8;
-const MIN_PERSON_RING = 14;
-// Each person sits somewhere between these multiples of their board's base
-// radius, so a board reads as an organic cluster rather than a perfect fan.
-const SPOKE_MIN = 0.7;
-const SPOKE_MAX = 1.35;
-// Room past a board for its (zoom-gated, horizontal) name labels.
-const LABEL_ROOM_X = 46;
-const LABEL_ROOM_Y = 10;
-const GAP = 28;
-// Every board fans over this much of a circle, on the side of the company
-// opposite its name. Less than a half circle so the ends of the fan stay off
-// the horizontal, where same-row edges run.
-const PERSON_ARC = Math.PI * 0.75;
 // Company names are drawn at a constant on-screen size, so their size in
 // graph units depends on zoom. These are the values at zoom 1, used to
 // reserve room for them: distance from the node's middle to the name, and
@@ -36,30 +23,44 @@ const PERSON_ARC = Math.PI * 0.75;
 const COMPANY_LABEL_OFFSET = 11;
 const COMPANY_LABEL_FONT = 14;
 const COMPANY_LABEL_PAD = 5;
+// A board is a full circle around its company, so the ring must clear the
+// company's name (drawn just above or below the node) at zoom 1.
+const MIN_PERSON_RING = COMPANY_LABEL_OFFSET + COMPANY_LABEL_FONT + COMPANY_LABEL_PAD + 2;
+// Room past a ring for its (zoom-gated, horizontal) initials.
+const LABEL_ROOM_X = 18;
+const LABEL_ROOM_Y = 10;
+const GAP = 28;
+const FULL_CIRCLE = Math.PI * 2;
+// Most companies on one line of a tier before the rest wrap onto another
+// line. Without a cap a company with a dozen suppliers, or a large industry,
+// makes one row so long that fitting it on screen shrinks every name away.
+const ROW_COLUMNS = 5;
+// Same cap for the searched company's own line, per side of it.
+const SIDE_COLUMNS = 2;
 
-function personRingRadius(count: number, arc: number): number {
-  return Math.max(MIN_PERSON_RING, (count * PERSON_SPACING) / arc);
+/** Ring radius that keeps `count` evenly spaced people PERSON_SPACING apart. */
+function personRingRadius(count: number): number {
+  return Math.max(MIN_PERSON_RING, (count * PERSON_SPACING) / FULL_CIRCLE);
 }
 
-/** Stable 0..1 value per id — same person, same spoke length, every render. */
-function unitHash(id: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < id.length; i++) {
-    h ^= id.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return (h >>> 0) / 4294967295;
-}
+// Name suffixes that are not a surname, so "Robyn Denholm Jr" reads "RD".
+const NAME_SUFFIXES = new Set(["jr", "sr", "ii", "iii", "iv"]);
 
 /**
- * Spoke length for the i-th person on a board: alternating short/long, so
- * neighbours never share a length, plus a per-person hash so the pattern
- * isn't regular.
+ * "Robyn M Denholm" -> "RD": the first letter of the first and last name.
+ * Drawn beside each person instead of the full name, which kept the rings
+ * from reading as rings. A one-word name gives one letter; "" gives "".
  */
-function spokeScale(personId: string, index: number): number {
-  const base = index % 2 === 0 ? 0.25 : 0.75;
-  const t = Math.min(1, Math.max(0, base + (unitHash(personId) - 0.5) * 0.5));
-  return SPOKE_MIN + t * (SPOKE_MAX - SPOKE_MIN);
+export function initials(name: string): string {
+  const words = name
+    .split(/\s+/)
+    .map((w) => w.replace(/[.,]/g, ""))
+    .filter((w) => w.length > 0);
+  while (words.length > 1 && NAME_SUFFIXES.has(words[words.length - 1].toLowerCase())) words.pop();
+  if (words.length === 0) return "";
+  const first = words[0][0];
+  const last = words.length > 1 ? words[words.length - 1][0] : "";
+  return (first + last).toUpperCase();
 }
 
 /**
@@ -75,10 +76,11 @@ function tierShift(relationship: GraphEdge["relationship"]): number {
 
 /**
  * Supply-chain layout: suppliers above the searched company, customers below,
- * competitors and peers beside it on the same row. Each row is one tier of
- * the pipeline (a supplier's supplier is two rows up), and companies within a
- * row are evenly spaced. Row height and column width grow with board size so
- * neighbouring boards never overlap.
+ * competitors and peers beside it. Each tier of the pipeline is a band (a
+ * supplier's supplier is two bands up): one line of evenly spaced companies,
+ * or several staggered lines when the tier has more than fit on one. Line
+ * height and column width grow with board size so neighbouring boards never
+ * overlap.
  *
  * `seats` may be empty (boards arrive after companies); the layout is simply
  * recomputed when they land and nodes glide to their adjusted spots.
@@ -108,11 +110,11 @@ export function computeGraphLayout(
     (boardOf.get(companyId) ?? []).filter((p) => seatsOf.get(p)?.length === 1);
 
   const maxBoard = Math.max(0, ...companies.map((c) => ringMembers(c.id).length));
-  const boardReach = maxBoard === 0 ? 0 : personRingRadius(maxBoard, PERSON_ARC) * SPOKE_MAX;
+  const boardReach = maxBoard === 0 ? 0 : personRingRadius(maxBoard);
+  // A ring reaches all the way round its company, so neighbours in both
+  // directions need room for two rings (the names sit inside the rings).
   const colWidth = Math.max(110, 2 * (boardReach + LABEL_ROOM_X) + GAP);
-  // A board only reaches to one side of its company now, so a row needs room
-  // for one board plus the next row's company name, not two boards.
-  const rowHeight = Math.max(110, boardReach + LABEL_ROOM_Y + COMPANY_LABEL_OFFSET + COMPANY_LABEL_FONT + GAP);
+  const rowHeight = Math.max(110, 2 * (boardReach + LABEL_ROOM_Y) + GAP);
 
   // Assign tiers (rows) by walking out from the center, BFS so each company
   // gets placed relative to its closest connection. `parent` remembers that
@@ -148,53 +150,107 @@ export function computeGraphLayout(
   }
 
   const x = new Map<string, number>([[center.id, 0]]);
+  // Each tier is a band of one or more lines. `line` is a company's line
+  // within its band: for the center tier 0 is the searched company's own line
+  // and +-1, +-2 are the lines below and above it; for the other tiers it
+  // counts outward from the center.
+  const line = new Map<string, number>([[center.id, 0]]);
 
-  // Center row: competitors and peers alternate right/left of the center; a
-  // peer of a peer continues outward on its parent's side.
-  let nextRight = 1;
-  let nextLeft = 1;
+  // Center tier: competitors and peers alternate right/left of the center; a
+  // peer of a peer stays on its parent's side. Each side holds SIDE_COLUMNS
+  // per line, and the rest wrap onto lines below and above (0, +1, -1, ...),
+  // so a large industry fans out beside the center instead of running off in
+  // one long row. Wrapped lines are shifted half a column, which keeps their
+  // edges to the center from running through the companies on the line before.
+  const sides: { right: string[]; left: string[] } = { right: [], left: [] };
   let alternate = 0;
   for (const id of order) {
     if (id === center.id || row.get(id) !== 0) continue;
-    const parentX = x.get(parent.get(id) ?? "") ?? 0;
-    const goRight = parentX === 0 ? alternate++ % 2 === 0 : parentX > 0;
-    x.set(id, goRight ? nextRight++ * colWidth : -(nextLeft++ * colWidth));
+    const parentId = parent.get(id) ?? "";
+    const goRight = parentId === center.id || !parentId ? alternate++ % 2 === 0 : sides.right.includes(parentId);
+    (goRight ? sides.right : sides.left).push(id);
   }
+  for (const [ids, sign] of [
+    [sides.right, 1],
+    [sides.left, -1],
+  ] as const) {
+    ids.forEach((id, i) => {
+      const wrap = Math.floor(i / SIDE_COLUMNS);
+      const column = (i % SIDE_COLUMNS) + 1 + (wrap % 2 === 1 ? 0.5 : 0);
+      x.set(id, sign * column * colWidth);
+      line.set(id, wrap === 0 ? 0 : (wrap % 2 === 1 ? 1 : -1) * Math.ceil(wrap / 2));
+    });
+  }
+  const centerLines = [...line.values()];
+  const linesAbove = Math.max(0, ...centerLines.map((l) => -l));
+  const linesBelow = Math.max(0, ...centerLines);
 
-  // Other rows, nearest the center first: sort by where each company's
-  // parent sits, then space the row evenly around those parents' average x.
+  // Other tiers, nearest the center first: sort by where each company's
+  // parent sits, then split the tier into lines of at most ROW_COLUMNS, each
+  // spaced evenly around those parents' average x. The lines are balanced
+  // (8 companies make 4 + 4, not 5 + 3) and every other one is shifted half a
+  // column, so edges to the far line pass between the companies on the near one.
+  const linesInTier = new Map<number, number>();
   const otherRows = [...new Set([...row.values()])].filter((r) => r !== 0).sort((a, b) => Math.abs(a) - Math.abs(b));
   for (const r of otherRows) {
     const ids = order.filter((id) => row.get(id) === r);
     const desired = ids.map((id) => x.get(parent.get(id) ?? "") ?? 0);
     const sorted = ids.map((id, i) => ({ id, want: desired[i] })).sort((a, b) => a.want - b.want);
     const middle = desired.reduce((s, v) => s + v, 0) / desired.length;
-    sorted.forEach(({ id }, i) => x.set(id, middle + (i - (sorted.length - 1) / 2) * colWidth));
+    const lines = Math.ceil(sorted.length / ROW_COLUMNS);
+    const perLine = Math.ceil(sorted.length / lines);
+    linesInTier.set(r, lines);
+    sorted.forEach(({ id }, i) => {
+      const l = i % lines; // dealt across the lines, so each line still spans the tier left to right
+      const slot = Math.floor(i / lines);
+      const count = Math.min(perLine, Math.ceil((sorted.length - l) / lines));
+      const stagger = l % 2 === 1 ? colWidth / 2 : 0;
+      x.set(id, middle + (slot - (count - 1) / 2) * colWidth + stagger);
+      line.set(id, l);
+    });
   }
 
-  // Rows below the center are mirrored: name above the node, board below.
-  // That keeps every board on the far side from the center row, where most
-  // of a company's edges come in, and every name on the near side.
+  // Stack the bands: tiers above the center go up from the center band's top
+  // line, tiers below go down from its bottom line.
+  const bandStart = new Map<number, number>(); // tier -> the line index (in rows from y = 0) of its first line
+  let up = linesAbove;
+  let down = linesBelow;
+  for (const r of otherRows) {
+    const lines = linesInTier.get(r) ?? 1;
+    if (r < 0) {
+      bandStart.set(r, -(up + 1));
+      up += lines;
+    } else {
+      bandStart.set(r, down + 1);
+      down += lines;
+    }
+  }
+
+  // Lines below the center's are mirrored: name above the node. That keeps
+  // every name on the side facing the center, where most of a company's
+  // edges come in, so the ring's first person can go on the far side.
   for (const c of companies) {
-    targets.set(c.id, { x: x.get(c.id) ?? 0, y: (row.get(c.id) ?? 0) * rowHeight });
-    if ((row.get(c.id) ?? 0) > 0) labelAbove.add(c.id);
+    const r = row.get(c.id) ?? 0;
+    const l = line.get(c.id) ?? 0;
+    const rows = r === 0 ? l : (bandStart.get(r) ?? 0) + (r < 0 ? -l : l);
+    targets.set(c.id, { x: x.get(c.id) ?? 0, y: rows * rowHeight });
+    if (rows > 0) labelAbove.add(c.id);
   }
 
-  // People: a fan on the side of the company opposite its name, so no board
-  // member can land on the name at any zoom level.
+  // People: an even circle around their company, at a radius that clears
+  // the company's name. The first person goes on the side away from the
+  // name, so a small board is mostly on that side and off the name.
   for (const c of companies) {
     const members = ringMembers(c.id);
     if (members.length === 0) continue;
     const origin = targets.get(c.id)!;
-    const r = personRingRadius(members.length, PERSON_ARC);
+    const r = personRingRadius(members.length);
     const facing = labelAbove.has(c.id) ? Math.PI / 2 : -Math.PI / 2;
-    const step = PERSON_ARC / Math.max(1, members.length - 1);
-    const start = facing - PERSON_ARC / 2;
+    const step = FULL_CIRCLE / members.length;
 
     members.forEach((personId, i) => {
-      const angle = members.length === 1 ? facing : start + i * step;
-      const spoke = r * spokeScale(personId, i);
-      targets.set(personId, { x: origin.x + Math.cos(angle) * spoke, y: origin.y + Math.sin(angle) * spoke });
+      const angle = facing + i * step;
+      targets.set(personId, { x: origin.x + Math.cos(angle) * r, y: origin.y + Math.sin(angle) * r });
       personAnchors.set(personId, origin);
     });
   }
@@ -245,31 +301,6 @@ export function computeGraphLayout(
   }
 
   return { targets, personAnchors, labelAbove };
-}
-
-/**
- * How many company-to-company edges each company is from the searched one
- * (which is 0). Edges are walked in either direction — "A supplies B" still
- * makes them neighbours. Companies with no path to the center are left out.
- */
-export function companyHops(companies: GraphNode[], companyEdges: GraphEdge[]): Map<string, number> {
-  const hops = new Map<string, number>();
-  const center = companies.find((c) => c.isCenter);
-  if (!center) return hops;
-  hops.set(center.id, 0);
-  // Breadth-first: the queue is visited in order of distance, so the first
-  // time a company is reached is by its shortest path.
-  const queue = [center.id];
-  for (let i = 0; i < queue.length; i++) {
-    const id = queue[i];
-    for (const e of companyEdges) {
-      const next = e.source === id ? e.target : e.target === id ? e.source : undefined;
-      if (next === undefined || hops.has(next)) continue;
-      hops.set(next, hops.get(id)! + 1);
-      queue.push(next);
-    }
-  }
-  return hops;
 }
 
 /**

@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from backend.api.deps import get_kalshi_client
@@ -105,12 +105,18 @@ def mock_series(market_id: str, range_key: RangeKey, now: datetime | None = None
 def get_market_series(
     market_id: str,
     range: RangeKey = "1m",  # noqa: A002 - query param name is part of the API
+    mock: bool = True,
     client: httpx.Client = Depends(get_kalshi_client),
 ) -> list[MarketPricePoint]:
+    """Kalshi's candles for the market. With `mock=false` a market Kalshi has nothing for is a 404
+    rather than the made-up series: a chart that claims to show a market must not draw a fake line.
+    """
     try:
         points = fetch_kalshi_series(market_id, range, client)
         if points:
             return points
     except (httpx.HTTPError, ValueError, KeyError) as exc:
-        log.warning("Kalshi candlesticks failed for %s, using mock: %s", market_id, exc)
+        log.warning("Kalshi candlesticks failed for %s: %s", market_id, exc)
+    if not mock:
+        raise HTTPException(404, f"No Kalshi price history for {market_id}")
     return mock_series(market_id, range)

@@ -17,6 +17,8 @@ import websockets
 log = logging.getLogger(__name__)
 
 GAMMA_URL = "https://gamma-api.polymarket.com"
+CLOB_URL = "https://clob.polymarket.com"
+HISTORY_MAX_SPAN_S = 14 * 86400  # /prices-history rejects a startTs..endTs window much longer than this
 WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 SOURCE = "polymarket"
 DISCOVERY_INTERVAL_S = 5 * 60
@@ -87,6 +89,50 @@ def market_rows(events: list[dict], tags: list[str], max_markets: int, now: floa
             })
     rows.sort(key=lambda r: r["volume24hr"], reverse=True)
     return rows[:max_markets]
+
+
+async def fetch_market(client: httpx.AsyncClient, condition_id: str) -> dict:
+    """One market's Gamma record (`startDate`, `clobTokenIds`...), or {} when Gamma has none.
+    Gamma leaves closed markets out unless asked, so a miss is retried with closed=true.
+    """
+    for extra in ({}, {"closed": "true"}):
+        resp = await client.get(f"{GAMMA_URL}/markets", params={"condition_ids": condition_id, **extra})
+        resp.raise_for_status()
+        rows = resp.json()
+        if rows:
+            return rows[0]
+    return {}
+
+
+def yes_token(market: dict) -> str | None:
+    """The CLOB token of outcome 0, our YES (see the module docstring)."""
+    tokens = _json_list(market.get("clobTokenIds"))
+    return str(tokens[0]) if tokens else None
+
+
+async def fetch_price_history(client: httpx.AsyncClient, token: str, start_ts: int, end_ts: int,
+                              interval_min: int) -> list[dict]:
+    """Price points `{"t": unix seconds, "p": 0-1}` for one token in [start_ts, end_ts], about one
+    per `interval_min` minutes, oldest first. Polymarket returns only moments it has a price for.
+
+    The endpoint refuses a long startTs..endTs window, so minute and hour data is fetched in
+    windows of HISTORY_MAX_SPAN_S. Daily data instead asks for the market's whole life
+    (`interval=max`, one small response) and keeps the part inside the window.
+    """
+    async def get(params: dict) -> list[dict]:
+        resp = await client.get(f"{CLOB_URL}/prices-history", params={"market": token, **params})
+        resp.raise_for_status()
+        return resp.json().get("history") or []
+
+    if interval_min >= 1440:
+        points = await get({"interval": "max", "fidelity": interval_min})
+    else:
+        points = []
+        for start in range(start_ts, end_ts, HISTORY_MAX_SPAN_S):
+            points += await get({"startTs": start, "endTs": min(start + HISTORY_MAX_SPAN_S, end_ts),
+                                 "fidelity": interval_min})
+    by_time = {int(p["t"]): p for p in points if start_ts <= int(p["t"]) <= end_ts}  # windows share an edge
+    return [by_time[t] for t in sorted(by_time)]
 
 
 async def fetch_events(client: httpx.AsyncClient, tag: str) -> list[dict]:

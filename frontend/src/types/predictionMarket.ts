@@ -16,6 +16,10 @@ export interface PredictionMarket {
   change24h?: number; // cents moved over the last 24h (signed)
   volume?: number; // total traded
   closeTime: string | null; // ISO 8601
+  /** Which outcome of the event this market is; the venue's market title; its resolution rule. */
+  outcome?: string | null;
+  question?: string | null;
+  rules?: string | null;
   /** Why it was recommended (set by GET /entities/{company}/top-markets). */
   tier?: 1 | 2 | 3; // 1 = about the company, 2 = a linked company, 3 = one of the tags
   matched?: string[]; // entity names that made it match

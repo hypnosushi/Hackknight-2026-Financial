@@ -1,6 +1,7 @@
+import { useMemo } from "react";
 import { Lightning, TrendDown, TrendUp } from "@phosphor-icons/react";
 import { toMarketCard } from "../../../lib/api/predictionMarkets";
-import type { RecentAlert } from "../../../types/alert";
+import type { Alert, RecentAlert } from "../../../types/alert";
 import type { PredictionMarket } from "../../../types/predictionMarket";
 import { SourceMark } from "../shared/SourceMark";
 import { useWorkspace } from "../useWorkspace";
@@ -15,9 +16,10 @@ import {
   LIVE_WINDOW_MINUTES,
   useLiveAlerts,
 } from "./LiveAlertsProvider";
+import { useAutoScroll } from "./useAutoScroll";
 
 /** An alert's market as a chartable PredictionMarket, so a live move can be charted like a recommendation. */
-export function alertToMarket(alert: RecentAlert): PredictionMarket {
+export function alertToMarket(alert: Alert): PredictionMarket {
   return {
     id: alert.marketId,
     source: alert.source === "kalshi" ? "kalshi" : "polymarket",
@@ -31,11 +33,14 @@ export function alertToMarket(alert: RecentAlert): PredictionMarket {
 function LiveEventCard({
   alert,
   selected,
+  tabbable = true,
   onToggle,
   onOpenCompany,
 }: {
   alert: RecentAlert;
   selected: boolean;
+  /** False in the repeated copy of the list: it still takes clicks, but Tab skips it. */
+  tabbable?: boolean;
   onToggle: () => void;
   onOpenCompany: (symbol: string) => void;
 }) {
@@ -58,6 +63,7 @@ function LiveEventCard({
           type="button"
           onClick={onToggle}
           aria-pressed={selected}
+          tabIndex={tabbable ? undefined : -1}
           className="flex w-full items-start gap-2 text-left"
         >
           <SourceMark
@@ -81,13 +87,15 @@ function LiveEventCard({
           style={{ color: "var(--text-tertiary)" }}
         >
           <span
-            className="flex items-center gap-0.5 font-semibold"
+            className="flex shrink-0 items-center gap-0.5 whitespace-nowrap font-semibold"
             style={{ color }}
           >
             <Trend size={10} weight="bold" aria-hidden="true" />
             {DIRECTION_LABELS[alert.direction]}
           </span>
-          <span className="truncate">{summaryDetail(alert.summary)}</span>
+          <span className="min-w-0 truncate">
+            {summaryDetail(alert.summary)}
+          </span>
         </p>
         {alert.companies.length > 0 && (
           <p className="flex flex-wrap items-center gap-1 pl-7">
@@ -96,6 +104,7 @@ function LiveEventCard({
                 key={c.symbol}
                 type="button"
                 onClick={() => onOpenCompany(c.symbol)}
+                tabIndex={tabbable ? undefined : -1}
                 title={`${c.name ?? c.symbol}: open on the graph`}
                 className="rounded-full px-1.5 text-[10px] font-semibold tabular-nums"
                 style={{
@@ -121,10 +130,14 @@ function LiveEventCard({
  * The sidebar's bottom half: unusual market moves from the last hour at or
  * above the "large" score, newest first. Cards toggle into the chart selection
  * like recommendations do; a company chip opens that ticker on the graph.
+ * A list too long for its box scrolls on its own and loops (useAutoScroll).
  */
 export function LiveEventsList() {
   const { state, dispatch } = useWorkspace();
   const { large, status } = useLiveAlerts();
+  const ids = useMemo(() => large.map((a) => a.id), [large]);
+  const { scrollerRef, firstCopyRef, loops, scrollerProps } =
+    useAutoScroll(ids);
 
   function toggle(alert: RecentAlert) {
     if (state.selectedMarketIds.includes(alert.marketId)) {
@@ -189,17 +202,33 @@ export function LiveEventsList() {
             : `No market moved past score ${LARGE_MOVE_SCORE} in the last hour.`}
         </p>
       ) : (
-        <ul className="flex min-h-0 flex-col gap-1.5 overflow-y-auto pr-1">
-          {large.map((a) => (
-            <LiveEventCard
-              key={a.id}
-              alert={a}
-              selected={state.selectedMarketIds.includes(a.marketId)}
-              onToggle={() => toggle(a)}
-              onOpenCompany={openCompany}
-            />
+        <div
+          ref={scrollerRef}
+          {...scrollerProps}
+          className="flex min-h-0 flex-col gap-1.5 overflow-y-auto pr-1"
+        >
+          {/* Rendered twice when it overflows, so the auto-scroll can wrap around (useAutoScroll).
+              The second copy is hidden from screen readers and the Tab order: same cards again. */}
+          {(loops ? [false, true] : [false]).map((repeat) => (
+            <ul
+              key={String(repeat)}
+              ref={repeat ? undefined : firstCopyRef}
+              aria-hidden={repeat || undefined}
+              className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] content-start shrink-0 gap-1.5"
+            >
+              {large.map((a) => (
+                <LiveEventCard
+                  key={a.id}
+                  alert={a}
+                  selected={state.selectedMarketIds.includes(a.marketId)}
+                  tabbable={!repeat}
+                  onToggle={() => toggle(a)}
+                  onOpenCompany={openCompany}
+                />
+              ))}
+            </ul>
           ))}
-        </ul>
+        </div>
       )}
     </section>
   );

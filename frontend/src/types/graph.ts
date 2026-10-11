@@ -62,6 +62,8 @@ export interface GraphHighlight {
 export interface CompanyGraphResponse {
   company: GraphCompany;
   status: GraphStatus;
+  /** The link run alone. "done" here while `status` is "running" means only the news run is left. */
+  links_status?: GraphStatus | null;
   nodes: GraphNode[];
   links: GraphLink[];
   highlights: GraphHighlight[];

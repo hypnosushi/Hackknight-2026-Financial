@@ -91,14 +91,11 @@ function EdgeSwatch({ rel }: { rel: RelationshipType }) {
 export function GraphLegend({
   showBoardInterlock = false,
   showHighlights = false,
-  showFlashes = false,
   ticker = null,
 }: {
   showBoardInterlock?: boolean;
   /** Whether any drawn company has a recent highlight (a colored node). */
   showHighlights?: boolean;
-  /** Whether any drawn company is flashing for a live market move. */
-  showFlashes?: boolean;
   ticker?: string | null;
 }) {
   const items = showBoardInterlock
@@ -143,39 +140,31 @@ export function GraphLegend({
       <span className="text-[10px]" style={{ color: "var(--text-tertiary)" }}>
         Arrows point from seller to buyer
       </span>
-      {showFlashes && (
-        <>
-          <span
-            className="mt-1 text-[10px] font-semibold uppercase tracking-wider"
-            style={{ color: "var(--text-tertiary)" }}
-          >
-            Live move · last hour
-          </span>
-          <div className="flex items-center gap-2">
-            <span
-              className="h-2.5 w-2.5 shrink-0 rounded-full"
-              style={{
-                background: "var(--surface-elevated)",
-                border: "1.5px solid var(--text-primary)",
-                boxShadow:
-                  "0 0 0 4px color-mix(in srgb, var(--text-primary) 15%, transparent)",
-              }}
-            />
-            <span
-              className="text-xs"
-              style={{ color: "var(--text-secondary)" }}
-            >
-              Pulsing ring = a market it's exposed to moved sharply
-            </span>
-          </div>
-          <span
-            className="text-[10px]"
-            style={{ color: "var(--text-tertiary)" }}
-          >
-            Direction is in the alerts list, not on the node
-          </span>
-        </>
-      )}
+      {/* Always listed, even with nothing pulsing: a live move can start at any moment, and the
+          key should already say what the ring means when it does. */}
+      <span
+        className="mt-1 text-[10px] font-semibold uppercase tracking-wider"
+        style={{ color: "var(--text-tertiary)" }}
+      >
+        Live move · last hour
+      </span>
+      <div className="flex items-center gap-2">
+        <span
+          className="h-2.5 w-2.5 shrink-0 rounded-full"
+          style={{
+            background: "var(--surface-elevated)",
+            border: "1.5px solid var(--text-primary)",
+            boxShadow:
+              "0 0 0 4px color-mix(in srgb, var(--text-primary) 15%, transparent)",
+          }}
+        />
+        <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
+          Pulsing ring = a market it's exposed to moved sharply
+        </span>
+      </div>
+      <span className="text-[10px]" style={{ color: "var(--text-tertiary)" }}>
+        Direction is in the alerts list, not on the node
+      </span>
       {showHighlights && (
         <>
           <span
@@ -207,7 +196,7 @@ export function GraphLegend({
             className="text-[10px]"
             style={{ color: "var(--text-tertiary)" }}
           >
-            Pulsing company = a recent event; click it for details
+            Colored company = a recent news event; click it for details
           </span>
         </>
       )}

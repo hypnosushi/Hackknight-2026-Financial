@@ -458,6 +458,7 @@ def board_members(seats: list) -> list[BoardMemberOut]:
 @router.get("/graph/{ticker}", response_model=GraphResponse)
 async def get_graph(
     ticker: str,
+    highlights: bool = True,
     cfg: graph_config.Config = Depends(get_config),
     db: GraphDb | None = Depends(get_db),
     directory: CompanyDirectory | None = Depends(get_company_directory),
@@ -481,12 +482,16 @@ async def get_graph(
             if status == "start":
                 start_link_run(company.symbol, db, build, cfg, directory)
                 status = "running"
+            links_status = status
             stored = await graph_links.read_links(session, company.symbol, cfg.graph_max_linked)
             nodes, out_links = graph_parts(company.symbol, stored)
-            if status == "done" and await refresh_highlights(session, company, nodes, cfg, db=db,
+            # highlights=false: the caller wants the links only (the workspace's hop expansion asks
+            # for dozens of companies), so no news run is started and the answer is "done" as soon
+            # as the links are. Highlights already stored are still returned.
+            if status == "done" and highlights and await refresh_highlights(session, company, nodes, cfg, db=db,
                                                              build=build_highlights, directory=directory, now=now):
                 status = "running"
-            highlights = await read_highlights(session, [n.symbol for n in nodes], now, cfg)
+            stored_highlights = await read_highlights(session, [n.symbol for n in nodes], now, cfg)
             industries = await read_industries(session, [company.symbol, *(n.symbol for n in nodes)])
             nodes = [n.model_copy(update={"industry": industries.get(n.symbol)}) for n in nodes]
     except (SQLAlchemyError, OSError) as exc:
@@ -495,7 +500,7 @@ async def get_graph(
 
     return GraphResponse(company=GraphCompanyOut(symbol=company.symbol, name=company.name,
                                                  industry=industries.get(company.symbol)),
-                         status=status, nodes=nodes, links=out_links, highlights=highlights)
+                         status=status, links_status=links_status, nodes=nodes, links=out_links, highlights=stored_highlights)
 
 
 @router.get("/graph/{ticker}/board", response_model=BoardResponse)

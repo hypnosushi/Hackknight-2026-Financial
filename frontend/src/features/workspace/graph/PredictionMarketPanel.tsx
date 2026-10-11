@@ -216,14 +216,11 @@ export function PredictionMarketPanel({ ticker }: { ticker: string | null }) {
     const change = biggest?.change24h ?? 0;
     reportCenterMove(
       ticker,
-      Math.abs(change) >= LARGE_CHANGE_CENTS
-        ? change > 0
-          ? "yes_up"
-          : "yes_down"
-        : null,
+      // Sample markets are made up: a fake move must not pulse a real company.
+      !recsAreSample && Math.abs(change) >= LARGE_CHANGE_CENTS ? biggest : null,
     );
     return () => reportCenterMove(null, null);
-  }, [recs, ticker, reportCenterMove]);
+  }, [recs, recsAreSample, ticker, reportCenterMove]);
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -357,7 +354,7 @@ export function PredictionMarketPanel({ ticker }: { ticker: string | null }) {
         ) : (
           // max-h: a viewport of about four cards (10 are loaded) that scrolls, so the list neither
           // pushes the live-moves section down nor changes height as results change.
-          <ul className="flex max-h-[19rem] min-h-0 flex-col gap-1.5 overflow-y-auto pr-1">
+          <ul className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] content-start max-h-[19rem] min-h-0 gap-1.5 overflow-y-auto pr-1">
             {items.map((m) => (
               <MarketCard
                 key={m.id}

@@ -153,6 +153,7 @@ interface TopMarketsResponse {
     event_title: string | null;
     title: string | null;
     outcome_label: string | null;
+    rules_primary?: string | null;
     close_time: string | null;
     url: string | null;
     tier: 1 | 2 | 3;
@@ -195,6 +196,10 @@ export async function fetchRecommendedMarkets(
         source: toSource(m.source),
         // event_title is the question; title/outcome_label often only name one strike of it.
         title: m.event_title ?? m.title ?? m.market_id,
+        // Kept apart from the title so the chart can say which answer's odds it draws.
+        outcome: m.outcome_label,
+        question: m.event_title && m.title && m.title !== m.event_title ? m.title : null,
+        rules: m.rules_primary ?? null,
         category: "",
         closeTime: m.close_time,
         tier: m.tier,
@@ -248,6 +253,44 @@ export async function matchMarkets(query: string): Promise<PredictionMatch[]> {
   return delay(matches, 1600);
 }
 
+/** Shape of GET /markets/{id}/outcomes (backend/api/market_history.py::OutcomeOut). */
+interface OutcomeResponse {
+  source: string;
+  market_id: string;
+  title: string | null;
+  outcome_label: string | null;
+  event_title: string | null;
+  rules_primary: string | null;
+  close_time: string | null;
+  url: string | null;
+}
+
+/**
+ * The markets of this market's event, one per outcome, this one included. For a
+ * sample market (no backend) or an unknown one the market is its own only outcome,
+ * so callers can always find the current one in the list.
+ */
+export async function fetchMarketOutcomes(market: PredictionMarket): Promise<PredictionMarket[]> {
+  try {
+    const rows = await get<OutcomeResponse[]>(`/markets/${encodeURIComponent(market.id)}/outcomes`);
+    return rows.map((m) => ({
+      id: m.market_id,
+      source: toSource(m.source),
+      title: m.event_title ?? m.title ?? m.market_id,
+      outcome: m.outcome_label,
+      question: m.event_title && m.title && m.title !== m.event_title ? m.title : null,
+      rules: m.rules_primary,
+      category: market.category,
+      closeTime: m.close_time,
+      tier: market.tier,
+      matched: market.matched,
+      url: m.url,
+    }));
+  } catch {
+    return [market];
+  }
+}
+
 /**
  * The workspace stores selected markets as `MarketCard`s (the shape the chart
  * and saved projects already use); the venue's market id doubles as the card id.
@@ -260,5 +303,9 @@ export function toMarketCard(m: PredictionMarket): MarketCard {
     thumbnailUrl: "",
     seriesTitle: null,
     closeTime: m.closeTime,
+    outcome: m.outcome ?? null,
+    question: m.question ?? null,
+    rules: m.rules ?? null,
+    url: m.url ?? null,
   };
 }

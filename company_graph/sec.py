@@ -28,6 +28,7 @@ import json
 import os
 import re
 import time
+import weakref
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import date
@@ -123,6 +124,21 @@ class RateLimiter:
                 await self._sleep(self._stamps[0] + self.period - now)
 
 
+# One limiter per event loop, shared by every SecClient that isn't handed its own. A link run, a
+# board run and the hop expansion's extra runs each open their own client; with a limiter apiece
+# they would add up past SEC's limit (10 requests a second, per IP) even though each one obeyed it.
+_SHARED_LIMITERS: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, RateLimiter]" = weakref.WeakKeyDictionary()
+
+
+def shared_limiter() -> RateLimiter:
+    """The running event loop's limiter (a lock belongs to one loop, so it can't be a plain global)."""
+    loop = asyncio.get_running_loop()
+    limiter = _SHARED_LIMITERS.get(loop)
+    if limiter is None:
+        limiter = _SHARED_LIMITERS[loop] = RateLimiter()
+    return limiter
+
+
 class SecClient:
     def __init__(
         self,
@@ -146,7 +162,9 @@ class SecClient:
         self.user_agent = f"Hackknight2026 company-graph {email}"
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
         self.cache_ttl_s = cache_ttl_s
-        self.limiter = limiter or RateLimiter(sleep=sleep)
+        # An injected sleep (tests) gets a limiter that uses it; otherwise the process-wide one,
+        # looked up per request because the event loop isn't known yet.
+        self.limiter = limiter or (RateLimiter(sleep=sleep) if sleep is not asyncio.sleep else None)
         self.max_retries = max_retries
         self.backoff_s = backoff_s
         self._sleep = sleep
@@ -285,7 +303,7 @@ class SecClient:
             return cached
 
         for attempt in range(self.max_retries + 1):
-            await self.limiter.acquire()
+            await (self.limiter or shared_limiter()).acquire()
             resp = await self._http.get(full_url)
             if resp.status_code in RETRY_STATUSES:
                 if attempt == self.max_retries:

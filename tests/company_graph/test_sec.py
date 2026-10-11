@@ -523,3 +523,17 @@ def test_full_text_search_stops_at_total_and_handles_empty(tmp_path):
 
     assert run(go()) == []
     assert len(calls) == 1
+
+
+def test_clients_without_their_own_limiter_share_one_per_event_loop():
+    from company_graph.sec import shared_limiter
+
+    async def go():
+        a = SecClient(cache_dir=None, transport=httpx.MockTransport(lambda r: httpx.Response(200)))
+        b = SecClient(cache_dir=None, transport=httpx.MockTransport(lambda r: httpx.Response(200)))
+        assert a.limiter is None and b.limiter is None  # both fall through to the shared one
+        return shared_limiter(), shared_limiter()
+
+    first, again = run(go())
+    assert first is again
+    assert run(go())[0] is not first  # a new event loop gets its own: a lock can't cross loops
