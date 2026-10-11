@@ -1,6 +1,6 @@
 # Top Markets Helper
 
-**Status:** Draft
+**Status:** Built (backend): `GET /entities/{company}/top-markets`, `backend/enrichment/tag_match.py`
 **Owner:** Unassigned
 
 ## Problem / Why
@@ -23,8 +23,6 @@ predefined map, so this is one ranked query over those tags, not a new pipeline.
 
 - New enrichment, polling or classification. The helper only reads what market-search and
   the company graph already store.
-- Free-text tags (the frontend's Gemini tag step). Only map entities can be matched, because
-  only map entities are stored on markets. See Open Questions.
 - Ranking by price movement or alerts.
 - Frontend work.
 
@@ -76,7 +74,11 @@ predefined map, so this is one ranked query over those tags, not a new pipeline.
    It is code-reviewed like the rest of the map, validated by `load_entity_map` (every tag
    must be a map entity), and covered by `map_version`.
 
-Callers may also pass extra map entities (`tags=`) to add to these.
+Callers may also pass tags (`tags=`), as free text: "ev", "electric vehicle", "microchips".
+`backend/enrichment/tag_match.py` turns each into a map entity: exact name, ticker or alias
+matches are free; the rest go to Jev in one call (a Choice question per tag per half of the
+map, plus "none of these"), kept at probability 0.5 or more. Unmatched tags are returned in
+`unmatched_tags`. Matched tags rank as tier 3.
 
 ### Ranking: relevance first, activity second
 
@@ -125,7 +127,7 @@ async def top_markets(engine, company_symbol: str, extra_tags: list[str] = (), l
 
 Endpoint, mounted with the entity routes in `backend/api/entities.py`:
 
-`GET /entities/{company_id}/top-markets?limit=3&tags=Gold&tags=Copper`
+`GET /entities/{company_id}/top-markets?limit=3&tags=ev&tags=lithium`
 
 ```json
 {
@@ -153,9 +155,9 @@ for. Schema changes: the `volume_24h` column (proposed) and `company_tags` in th
 
 - **Volume column**: OK to add `volume_24h` to the shared `markets` table and the two pollers?
   Without it, ties are broken by close time only.
-- **Free-text tags**: the frontend plans `GET /markets/suggest?tags[]` with Gemini tags such as
-  "EV battery exposure". Should those be mapped onto map entities (e.g. through autocomplete
-  or one Jev call), or does this helper replace that endpoint?
+- **Tag matching consistency**: Jev sees all of a request's tags together, which can shift a
+  pick (seen live: "microchips" matched Semiconductors alone, Computer Memory Chips next to
+  "memory chips"). One call per tag would be steadier at a few more calls.
 - **Companies outside the map**: graph companies outside the 50 have no `company_tags`, and
   markets are only enriched with map entities. Return their graph-based matches only, or
   extend the map?

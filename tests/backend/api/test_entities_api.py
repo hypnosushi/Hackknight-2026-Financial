@@ -65,3 +65,51 @@ def test_unknown_entity_is_404(client):
 
 def test_category_values_match_the_map():
     assert set(get_args(entities.Category)) == set(CATEGORIES)
+
+
+@pytest.fixture
+def top_client(monkeypatch):
+    from backend.entities import MapEntity
+
+    calls = {}
+
+    async def get_entity(engine, symbol):
+        return {"NVDA": {"symbol": "NVDA", "name": "NVIDIA Corporation", "type": "company"},
+                "Gold": {"symbol": "Gold", "name": "Gold", "type": "resource"}}.get(symbol)
+
+    async def graph_links(engine, symbol):
+        return ["TSM"]
+
+    async def top_markets(engine, tiers, limit):
+        calls["tiers"], calls["limit"] = tiers, limit
+        return [{"source": "kalshi", "market_id": "KXA100-1", "event_id": "KXA100", "title": "A100 price?",
+                 "outcome_label": "Above $0.50", "event_title": "NVIDIA A100", "close_time": None, "url": None,
+                 "tier": 1, "matched": ["NVDA", "Semiconductors"], "event_key": "KXA100"}]
+
+    def match_tags(tags, entity_map):
+        semis = MapEntity(symbol="Semiconductors", name="Semiconductors", category="sector")
+        return {t: (semis if t == "microchips" else None) for t in tags}
+
+    for name, fn in [("get_entity", get_entity), ("graph_links", graph_links), ("top_markets", top_markets)]:
+        monkeypatch.setattr(entities.db, name, fn)
+    monkeypatch.setattr(entities, "match_tags", match_tags)
+    app.dependency_overrides[entities.get_engine] = lambda: None
+    test_client = TestClient(app)
+    test_client.calls = calls
+    yield test_client
+    app.dependency_overrides.clear()
+
+
+def test_top_markets_ranks_company_then_links_then_tags(top_client):
+    body = top_client.get("/entities/NVDA/top-markets", params=[("tags", "microchips"), ("tags", "banana")]).json()
+    assert top_client.calls["tiers"] == {"NVDA": 1, "TSM": 2, "Semiconductors": 3}
+    assert top_client.calls["limit"] == 3
+    assert [(t["input"], t["id"], t["source"]) for t in body["tags"]] == [
+        ("microchips", "Semiconductors", "tag"), (None, "TSM", "graph")]
+    assert body["unmatched_tags"] == ["banana"]
+    assert body["markets"][0]["tier"] == 1 and body["markets"][0]["matched"] == ["NVDA", "Semiconductors"]
+
+
+def test_top_markets_needs_a_company(top_client):
+    assert top_client.get("/entities/Gold/top-markets").status_code == 404
+    assert top_client.get("/entities/NOPE/top-markets").status_code == 404
