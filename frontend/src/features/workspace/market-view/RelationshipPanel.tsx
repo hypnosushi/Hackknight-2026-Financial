@@ -11,9 +11,18 @@ interface RelationshipPanelProps {
   onSelect: (id: string) => void;
   domain: [number, number];
   color: string;
+  chartHeight?: number;
 }
 
-export function RelationshipPanel({ result, markets, selectedId, onSelect, domain, color }: RelationshipPanelProps) {
+export function RelationshipPanel({
+  result,
+  markets,
+  selectedId,
+  onSelect,
+  domain,
+  color,
+  chartHeight = 170,
+}: RelationshipPanelProps) {
   const muted = { color: "var(--text-tertiary)" };
 
   return (
@@ -25,8 +34,17 @@ export function RelationshipPanel({ result, markets, selectedId, onSelect, domai
         {markets.length > 1 && (
           <div role="radiogroup" aria-label="Market used for correlation" className="flex flex-wrap gap-3 text-xs">
             {markets.map((m) => (
-              <label key={m.id} className="flex cursor-pointer items-center gap-1" style={{ color: "var(--text-secondary)" }}>
-                <input type="radio" name="relationship-market" checked={m.id === selectedId} onChange={() => onSelect(m.id)} />
+              <label
+                key={m.id}
+                className="flex cursor-pointer items-center gap-1"
+                style={{ color: "var(--text-secondary)" }}
+              >
+                <input
+                  type="radio"
+                  name="relationship-market"
+                  checked={m.id === selectedId}
+                  onChange={() => onSelect(m.id)}
+                />
                 {m.label}
               </label>
             ))}
@@ -35,16 +53,21 @@ export function RelationshipPanel({ result, markets, selectedId, onSelect, domai
       </div>
 
       {result === null ? (
-        <p className="px-1 text-sm" style={muted}>Select a market to see how it relates to the stock.</p>
+        <p className="px-1 text-sm" style={muted}>
+          Select a market to see how it relates to the stock.
+        </p>
       ) : result.status === "insufficient" ? (
         <p className="px-1 text-sm" style={muted}>
           Not enough overlapping data ({result.pairs} of {MIN_PAIRS} needed return pairs). Try a longer range.
         </p>
       ) : (
         <>
-          <div aria-label="Rolling correlation chart" className="h-[170px] w-full">
+          <div aria-label="Rolling correlation chart" className="w-full" style={{ height: chartHeight }}>
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={result.rolling.map((p) => ({ t: p.t, r: p.r, band: [p.lo, p.hi] }))} margin={{ ...PANEL_MARGIN, bottom: 4 }}>
+              <ComposedChart
+                data={result.rolling.map((p) => ({ t: p.t, r: p.r, band: [p.lo, p.hi] }))}
+                margin={{ ...PANEL_MARGIN, bottom: 4 }}
+              >
                 <CartesianGrid stroke="var(--border)" vertical={false} />
                 <TimeAxis domain={domain} show />
                 {/* Fixed [-1, 1]: auto-scaling would make a weak r look dramatic. */}
@@ -66,17 +89,35 @@ export function RelationshipPanel({ result, markets, selectedId, onSelect, domai
                       : [Number(v).toFixed(2), "r"]
                   }
                 />
-                <Area type="monotone" dataKey="band" stroke="none" fill={color} fillOpacity={0.18} isAnimationActive={false} />
-                <Line type="monotone" dataKey="r" stroke={color} strokeWidth={2} dot={false} isAnimationActive={false} />
+                <Area
+                  type="monotone"
+                  dataKey="band"
+                  stroke="none"
+                  fill={color}
+                  fillOpacity={0.18}
+                  isAnimationActive={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="r"
+                  stroke={color}
+                  strokeWidth={2}
+                  dot={false}
+                  isAnimationActive={false}
+                />
               </ComposedChart>
             </ResponsiveContainer>
           </div>
           <p className="px-1 text-sm" style={{ color: "var(--text-secondary)" }}>
-            {result.latest ? `Latest r = ${result.latest.r.toFixed(2)} (n = ${result.latest.n})` : "Latest r unavailable"}
+            {result.latest
+              ? `Latest r = ${result.latest.r.toFixed(2)} (n = ${result.latest.n})`
+              : "Latest r unavailable"}
             {result.leadLag && ` · Best lead-lag: ${describeLeadLag(result.leadLag)}`}
             {` · odds moved in ${Math.round(result.oddsActiveShare * 100)}% of steps`}
           </p>
-          <p className="px-1 text-xs" style={muted}>Association, not causation; thin markets inflate noise.</p>
+          <p className="px-1 text-xs" style={muted}>
+            Association, not causation; thin markets inflate noise.
+          </p>
         </>
       )}
     </section>

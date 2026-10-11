@@ -1,5 +1,6 @@
 import type { MarketCard } from "../../types/market";
-import type { PredictionMarket, PredictionMatch } from "../../types/predictionMarket";
+import type { MarketSource, PredictionMarket, PredictionMatch } from "../../types/predictionMarket";
+import { ApiError, get } from "../apiClient";
 import { delay } from "./mockUtils";
 
 /** Catalog entry = a market plus the metadata the mock matcher scores against. */
@@ -134,22 +135,79 @@ const CATALOG: CatalogEntry[] = [
 ];
 
 /** Strip the matcher-only fields so callers only ever see the public shape. */
-function toMarket({ relatedTickers: _r, keywords: _k, ...market }: CatalogEntry): PredictionMarket {
-  return market;
+function toMarket(entry: CatalogEntry): PredictionMarket {
+  const market: Partial<CatalogEntry> = { ...entry };
+  delete market.relatedTickers;
+  delete market.keywords;
+  return market as PredictionMarket;
+}
+
+/** Shape of GET /entities/{company}/top-markets (backend/api/entities.py::TopMarketsOut). */
+interface TopMarketsResponse {
+  markets: {
+    source: string;
+    market_id: string;
+    event_title: string | null;
+    title: string | null;
+    outcome_label: string | null;
+    close_time: string | null;
+    url: string | null;
+    tier: 1 | 2 | 3;
+    matched: string[];
+  }[];
+}
+
+/** Kalshi and Polymarket (global + US) are two venues to the UI; "polymarket_us" folds into "polymarket". */
+function toSource(source: string): MarketSource {
+  return source === "kalshi" ? "kalshi" : "polymarket";
+}
+
+export interface RecommendedMarkets {
+  markets: PredictionMarket[];
+  /** True when the backend was unreachable and these are the fabricated sample markets. */
+  isSample: boolean;
 }
 
 /**
- * Mocks GET /markets/recommendations?ticker=… — markets, from both venues, that
- * the backend would rank as relevant to the searched company. Mock: markets
- * tagged with the ticker first, then the rest. Returns enough to fill the
- * sidebar and scroll.
+ * Top markets for a company: its own first, then linked companies', then markets matching
+ * the workspace's tags (ranked server-side, at most 3). Only a backend failure (down, no DB
+ * configured) falls back to the sample catalog; a 404 or an empty list is a real answer and
+ * stays empty, since padding with unrelated markets is exactly what the helper's spec forbids.
  */
-export async function fetchRecommendedMarkets(ticker: string | null): Promise<PredictionMarket[]> {
-  const upper = ticker?.toUpperCase() ?? "";
-  const ranked = [...CATALOG].sort(
-    (a, b) => Number(b.relatedTickers.includes(upper)) - Number(a.relatedTickers.includes(upper)),
-  );
-  return delay(ranked.map(toMarket), 900);
+export async function fetchRecommendedMarkets(
+  ticker: string | null,
+  tags: string[] = [],
+): Promise<RecommendedMarkets> {
+  if (!ticker) return { markets: [], isSample: false };
+  const params = new URLSearchParams();
+  for (const tag of tags) params.append("tags", tag); // repeated key: FastAPI's list[str] Query
+  try {
+    const data = await get<TopMarketsResponse>(
+      `/entities/${encodeURIComponent(ticker)}/top-markets?${params.toString()}`,
+    );
+    return {
+      isSample: false,
+      markets: data.markets.map((m) => ({
+        id: m.market_id,
+        source: toSource(m.source),
+        // event_title is the question; title/outcome_label often only name one strike of it.
+        title: m.event_title ?? m.title ?? m.market_id,
+        category: "",
+        closeTime: m.close_time,
+        tier: m.tier,
+        matched: m.matched,
+        url: m.url,
+      })),
+    };
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return { markets: [], isSample: false };
+    console.warn("GET /entities/…/top-markets unavailable, using sample markets", error);
+    const upper = ticker.toUpperCase();
+    const ranked = [...CATALOG].sort(
+      (a, b) => Number(b.relatedTickers.includes(upper)) - Number(a.relatedTickers.includes(upper)),
+    );
+    return delay({ markets: ranked.map(toMarket), isSample: true }, 900);
+  }
 }
 
 /**

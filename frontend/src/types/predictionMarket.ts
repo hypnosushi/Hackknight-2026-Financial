@@ -10,10 +10,16 @@ export interface PredictionMarket {
   source: MarketSource;
   title: string; // the question the venue displays as the market header
   category: string;
-  yesPrice: number; // cents, 1-99
-  change24h: number; // cents moved over the last 24h (signed)
-  volume: number; // total traded
-  closeTime: string; // ISO 8601
+  // The top-markets endpoint stores no live quotes, so these are absent for real results
+  // and the card hides them rather than showing a made-up number.
+  yesPrice?: number; // cents, 1-99
+  change24h?: number; // cents moved over the last 24h (signed)
+  volume?: number; // total traded
+  closeTime: string | null; // ISO 8601
+  /** Why it was recommended (set by GET /entities/{company}/top-markets). */
+  tier?: 1 | 2 | 3; // 1 = about the company, 2 = a linked company, 3 = one of the tags
+  matched?: string[]; // entity names that made it match
+  url?: string | null;
 }
 
 /** A market returned by a free-text query, scored by the classifier (Jev). */

@@ -33,7 +33,10 @@ function SourceMark({ source }: { source: MarketSource }) {
   );
 }
 
-function formatClose(iso: string): string {
+const TIER_LABELS: Record<1 | 2 | 3, string> = { 1: "About the company", 2: "Linked company", 3: "Related topic" };
+
+function formatClose(iso: string | null): string {
+  if (!iso) return "no close date";
   const d = new Date(iso);
   return Number.isNaN(d.getTime())
     ? iso
@@ -57,8 +60,10 @@ function MarketCard({
   selected: boolean;
   onToggle: () => void;
 }) {
-  const up = market.change24h > 0;
-  const down = market.change24h < 0;
+  const hasQuote = market.yesPrice !== undefined;
+  const change = market.change24h ?? 0;
+  const up = change > 0;
+  const down = change < 0;
   const changeColor = up ? "var(--status-positive)" : down ? "var(--status-negative)" : "var(--status-neutral)";
   const match = "matchScore" in market ? market : null;
 
@@ -85,20 +90,30 @@ function MarketCard({
           </h4>
         </div>
 
-        <div className="flex items-baseline gap-2 pl-7 text-[10px]" style={{ color: "var(--text-tertiary)" }}>
-          <span className="text-sm font-semibold tabular-nums" style={{ color: "var(--text-primary)" }}>
-            {market.yesPrice}%
-          </span>
-          <span className="flex items-center gap-0.5 tabular-nums" style={{ color: changeColor }}>
-            {up && <TrendUp size={10} weight="bold" aria-hidden="true" />}
-            {down && <TrendDown size={10} weight="bold" aria-hidden="true" />}
-            {up ? "+" : ""}
-            {market.change24h}¢
-          </span>
-          <span className="ml-auto tabular-nums">
-            Vol {compact.format(market.volume)} · {formatClose(market.closeTime)}
-          </span>
-        </div>
+        {hasQuote ? (
+          <div className="flex items-baseline gap-2 pl-7 text-[10px]" style={{ color: "var(--text-tertiary)" }}>
+            <span className="text-sm font-semibold tabular-nums" style={{ color: "var(--text-primary)" }}>
+              {market.yesPrice}%
+            </span>
+            <span className="flex items-center gap-0.5 tabular-nums" style={{ color: changeColor }}>
+              {up && <TrendUp size={10} weight="bold" aria-hidden="true" />}
+              {down && <TrendDown size={10} weight="bold" aria-hidden="true" />}
+              {up ? "+" : ""}
+              {change}¢
+            </span>
+            <span className="ml-auto tabular-nums">
+              {market.volume !== undefined && `Vol ${compact.format(market.volume)} · `}
+              {formatClose(market.closeTime)}
+            </span>
+          </div>
+        ) : (
+          // Real recommendations carry no live quote: show why it matched instead of a price.
+          <p className="truncate pl-7 text-[10px]" style={{ color: "var(--text-tertiary)" }}>
+            {market.tier && <span style={{ color: "var(--accent)" }}>{TIER_LABELS[market.tier]}</span>}
+            {market.matched && market.matched.length > 0 && ` · ${market.matched.join(", ")}`}
+            {` · closes ${formatClose(market.closeTime)}`}
+          </p>
+        )}
 
         {match && (
           <p className="truncate pl-7 text-[10px]" style={{ color: "var(--text-tertiary)" }}>
@@ -121,7 +136,10 @@ function MarketCard({
  */
 export function PredictionMarketPanel({ ticker }: { ticker: string | null }) {
   const { state, dispatch } = useWorkspace();
+  const tags = state.tags;
+  const tagsKey = tags.join("\u0000");
   const [recs, setRecs] = useState<PredictionMarket[]>([]);
+  const [recsAreSample, setRecsAreSample] = useState(false);
   const [recsLoading, setRecsLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState<string | null>(null);
@@ -131,15 +149,19 @@ export function PredictionMarketPanel({ ticker }: { ticker: string | null }) {
   useEffect(() => {
     let cancelled = false;
     setRecsLoading(true);
-    fetchRecommendedMarkets(ticker).then((found) => {
+    fetchRecommendedMarkets(ticker, tags).then((found) => {
       if (cancelled) return;
-      setRecs(found);
+      setRecs(found.markets);
+      setRecsAreSample(found.isSample);
       setRecsLoading(false);
     });
     return () => {
       cancelled = true;
     };
-  }, [ticker]);
+    // Tags arrive after the graph settles; key on their content so a new array
+    // with the same tags doesn't refetch (the endpoint may spend a Jev call matching them).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticker, tagsKey]);
 
   // Drop results from a superseded query so a slow earlier run can't overwrite a newer one.
   useEffect(() => {
@@ -246,7 +268,7 @@ export function PredictionMarketPanel({ ticker }: { ticker: string | null }) {
               ? `Matching “${submitted}” against every market…`
               : `${matches.length} ${matches.length === 1 ? "match" : "matches"} for “${submitted}”`
             : ticker
-              ? `Recommended for ${ticker}`
+              ? `Recommended for ${ticker}${recsAreSample ? " · sample data (backend unavailable)" : ""}`
               : "Recommended markets"}
         </p>
 
@@ -263,7 +285,7 @@ export function PredictionMarketPanel({ ticker }: { ticker: string | null }) {
               color: "var(--text-tertiary)",
             }}
           >
-            No markets matched “{submitted}”.
+            {showingSearch ? `No markets matched “${submitted}”.` : `No markets found for ${ticker ?? "this company"} yet.`}
           </p>
         ) : (
           <ul className="flex min-h-0 flex-col gap-1.5 overflow-y-auto pr-1">

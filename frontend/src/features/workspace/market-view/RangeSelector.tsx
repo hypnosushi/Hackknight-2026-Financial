@@ -2,17 +2,21 @@ import type { ChartRange } from "../../../types/market";
 import { useWorkspace } from "../useWorkspace";
 
 const OPTIONS: Array<{ value: ChartRange; label: string; name: string }> = [
+  { value: "1d", label: "1D", name: "1 day" },
   { value: "1w", label: "1W", name: "1 week" },
   { value: "1m", label: "1M", name: "1 month" },
-  { value: "3m", label: "3M", name: "3 months" },
+  { value: "6m", label: "6M", name: "6 months" },
+  { value: "1y", label: "1Y", name: "1 year" },
+  { value: "all", label: "ALL", name: "Since the market opened" },
 ];
 
 /**
  * Segmented control for the chart's time window. Radio semantics (one of N,
  * arrow keys move selection) via native radio inputs — free keyboard and
- * screen-reader behavior without hand-rolled key handling.
+ * screen-reader behavior without hand-rolled key handling. `available` greys
+ * out ranges a selected market is too young for (null/undefined = all offered).
  */
-export function RangeSelector() {
+export function RangeSelector({ available }: { available?: ChartRange[] | null }) {
   const { state, dispatch } = useWorkspace();
 
   return (
@@ -24,11 +28,13 @@ export function RangeSelector() {
     >
       {OPTIONS.map((option) => {
         const selected = state.range === option.value;
+        // Never disable the active choice: the user must always be able to see what they are on.
+        const disabled = !selected && !!available && !available.includes(option.value);
         return (
           <label
             key={option.value}
-            title={option.name}
-            className="cursor-pointer rounded-[calc(var(--radius-control)-2px)] px-2.5 py-1 text-xs font-medium transition focus-within:ring-2"
+            title={disabled ? `${option.name} (a selected market is too new)` : option.name}
+            className={`${disabled ? "cursor-not-allowed opacity-40" : "cursor-pointer"} rounded-[calc(var(--radius-control)-2px)] px-2.5 py-1 text-xs font-medium transition focus-within:ring-2`}
             style={{
               background: selected ? "var(--accent)" : "transparent",
               color: selected ? "var(--accent-contrast)" : "var(--text-secondary)",
@@ -40,6 +46,7 @@ export function RangeSelector() {
               name="chart-range"
               value={option.value}
               checked={selected}
+              disabled={disabled}
               onChange={() => dispatch({ type: "RANGE_CHANGED", range: option.value })}
               aria-label={option.name}
               className="sr-only"

@@ -9,7 +9,7 @@ export interface MarketCard {
 }
 
 /** Visible window for the overlay chart; also selects the stock price tier. */
-export type ChartRange = "1w" | "1m" | "3m";
+export type ChartRange = "1d" | "1w" | "1m" | "6m" | "1y" | "all";
 
 /**
  * One point in a normalized series. `value` is a % change for stocks but a

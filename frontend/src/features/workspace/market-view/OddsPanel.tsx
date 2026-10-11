@@ -9,10 +9,36 @@ interface OddsPanelProps {
   colorById: Map<string, string>;
   /** Show date labels here when no panel below carries them. */
   showTimeAxis?: boolean;
+  /** Pixel height of the plot. */
+  height?: number;
+  /** Zoom the y-axis to the data instead of the full 0-100%, so small moves are visible. */
+  fit?: boolean;
+}
+
+/**
+ * Y-range hugging the data with 15% padding on each side and at least 10
+ * points of span (so a nearly flat market doesn't blow up into noise),
+ * clamped to the 0-100% a probability can occupy. The tick labels stay in real
+ * percent, so a zoomed move is still readable as the points it actually was.
+ */
+function fitDomain(markets: NormalizedSeries[]): [number, number] {
+  const values = markets.flatMap((m) => m.points.map((p) => p.rawValue));
+  if (values.length === 0) return [0, 100];
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  const pad = Math.max((hi - lo) * 0.15, (10 - (hi - lo)) / 2, 1);
+  return [Math.max(0, Math.floor(lo - pad)), Math.min(100, Math.ceil(hi + pad))];
 }
 
 /** Real 0-100% axis: a 3-point move looks like 3 points, not an amplified rescale. */
-export function OddsPanel({ markets, domain, colorById, showTimeAxis = false }: OddsPanelProps) {
+export function OddsPanel({
+  markets,
+  domain,
+  colorById,
+  showTimeAxis = false,
+  height = 190,
+  fit = false,
+}: OddsPanelProps) {
   // Markets share one time grid (lib/chart/align.ts), so rows can be keyed by timestamp.
   const rows = new Map<number, Record<string, number>>();
   for (const m of markets) {
@@ -22,15 +48,15 @@ export function OddsPanel({ markets, domain, colorById, showTimeAxis = false }: 
   const labelById = new Map(markets.map((m) => [m.id, m.label]));
 
   return (
-    <div aria-label="Market odds" className={showTimeAxis ? "h-[190px] w-full" : "h-[160px] w-full"}>
+    <div aria-label="Market odds" className="w-full" style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data} margin={PANEL_MARGIN}>
           <CartesianGrid stroke="var(--border)" vertical={false} />
           <TimeAxis domain={domain} show={showTimeAxis} />
           <YAxis
             width={Y_AXIS_WIDTH}
-            domain={[0, 100]}
-            ticks={[0, 25, 50, 75, 100]}
+            domain={fit ? fitDomain(markets) : [0, 100]}
+            ticks={fit ? undefined : [0, 25, 50, 75, 100]}
             tickFormatter={(v: number) => `${v}%`}
             tick={AXIS_TICK}
             axisLine={false}

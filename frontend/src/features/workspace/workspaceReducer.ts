@@ -137,7 +137,8 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         suggestedMarkets: action.project.suggestedMarkets,
         marketsStatus: "done",
         selectedMarketIds: action.project.selectedMarketIds,
-        range: action.project.range ?? "1m",
+        // Projects saved before the history route stored "3m", which no longer exists.
+        range: (action.project.range as string) === "3m" ? "6m" : (action.project.range ?? "1m"),
         evidence: action.project.evidence,
         activeProjectId: action.project.id,
         activeProjectName: action.project.name,

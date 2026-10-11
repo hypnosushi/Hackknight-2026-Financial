@@ -43,7 +43,10 @@ function ChartSkeleton() {
         <div className="h-3 w-24 animate-pulse rounded-full" style={{ background: "var(--border)" }} />
         <div className="h-3 w-16 animate-pulse rounded-full" style={{ background: "var(--border)" }} />
       </div>
-      <div className="relative flex-1 overflow-hidden rounded-[var(--radius-control)]" style={{ background: "var(--surface-elevated)" }}>
+      <div
+        className="relative flex-1 overflow-hidden rounded-[var(--radius-control)]"
+        style={{ background: "var(--surface-elevated)" }}
+      >
         <svg viewBox="0 0 400 160" preserveAspectRatio="none" className="h-full w-full">
           {[20, 60, 100, 140].map((y) => (
             <line key={y} x1="0" x2="400" y1={y} y2={y} stroke="var(--border)" strokeWidth="1" />
@@ -77,11 +80,7 @@ function ChartLegend({ entries }: { entries: LegendEntry[] }) {
     <ul className="flex flex-wrap items-center gap-4 px-1" aria-label="Chart series legend">
       {entries.map((entry) => (
         <li key={entry.key} className="flex items-center gap-2 text-sm" style={{ color: "var(--text-secondary)" }}>
-          <span
-            aria-hidden
-            className="inline-block h-[3px] w-4 rounded-full"
-            style={{ background: entry.color }}
-          />
+          <span aria-hidden className="inline-block h-[3px] w-4 rounded-full" style={{ background: entry.color }} />
           <span>{entry.label}</span>
           <span className="text-xs uppercase tracking-wide" style={{ color: "var(--text-tertiary)" }}>
             {entry.kind === "stock" ? "stock" : "market odds"}
@@ -92,7 +91,12 @@ function ChartLegend({ entries }: { entries: LegendEntry[] }) {
   );
 }
 
+export type ChartView = "main" | "correlation";
+
 export interface OverlayChartProps {
+  /** Controlled view, so the page can react to it (e.g. hide the evidence sidebar to give the correlation chart more width). */
+  view?: ChartView;
+  onViewChange?: (view: ChartView) => void;
   /** Overridden mostly for tests/storybook-style use — defaults to the workspace's active ticker. */
   ticker?: string;
   /** Overridden mostly for tests/storybook-style use — defaults to the workspace's selected markets. */
@@ -110,11 +114,19 @@ export interface OverlayChartProps {
 }
 
 /**
- * Stacked panels sharing one time axis: price (USD), odds (real 0-100%), and
- * a rolling correlation between SPY-adjusted stock returns and odds changes.
+ * Two views, switched by a tab: "Price & odds" stacks price (USD) over odds
+ * (real 0-100%, optionally zoomed) on one time axis; "Correlation" shows the
+ * rolling correlation between SPY-adjusted stock returns and odds changes.
  * Components are thin; all math lives in lib/chart/relationship.ts.
  */
-export function OverlayChart({ ticker, marketIds, children, className }: OverlayChartProps) {
+export function OverlayChart({
+  ticker,
+  marketIds,
+  children,
+  className,
+  view: controlledView,
+  onViewChange,
+}: OverlayChartProps) {
   const { state } = useWorkspace();
   const themeCtx = useContext(ThemeContext);
   const mode = themeCtx?.mode ?? "light";
@@ -126,6 +138,13 @@ export function OverlayChart({ ticker, marketIds, children, className }: Overlay
   const [bundle, setBundle] = useState<SeriesBundle | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "error" | "done">("idle");
   const [relationshipPick, setRelationshipPick] = useState<string | null>(null);
+  // One chart view at a time: stacking all three made it hard to tell which
+  // panel a line belonged to. "main" is price + odds on a shared time axis;
+  // "correlation" is the rolling-correlation analysis.
+  const [localView, setLocalView] = useState<ChartView>("main");
+  const view = controlledView ?? localView;
+  const setView = onViewChange ?? setLocalView;
+  const [fitOdds, setFitOdds] = useState(false);
 
   useEffect(() => {
     if (!effectiveTicker) {
@@ -195,16 +214,41 @@ export function OverlayChart({ ticker, marketIds, children, className }: Overlay
   const emptySeries = (series ?? []).filter((s) => s.points.length === 0);
   const shellClass = className ?? "flex h-full min-h-[360px] w-full flex-col gap-3 rounded-[var(--radius-panel)] p-4";
   const shellStyle = { background: "var(--surface)", border: "1px solid var(--border)" };
-  const relationshipHasChart = relationship?.status === "ok";
 
   // The header (incl. range selector) stays mounted while loading so changing range doesn't flicker it away.
   return (
     <div className={shellClass} style={shellStyle}>
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <h3 className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-          Price, odds and relationship
-        </h3>
-        <RangeSelector />
+        <div
+          role="tablist"
+          aria-label="Chart view"
+          className="flex gap-1 rounded-[var(--radius-control)] p-0.5"
+          style={{ background: "var(--bg)", border: "1px solid var(--border)" }}
+        >
+          {(
+            [
+              ["main", "Price & odds"],
+              ["correlation", "Correlation"],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              aria-selected={view === value}
+              onClick={() => setView(value)}
+              className="rounded-[7px] px-3 py-1 text-xs font-medium"
+              style={{
+                background: view === value ? "var(--surface)" : "transparent",
+                color: view === value ? "var(--text-primary)" : "var(--text-tertiary)",
+                boxShadow: view === value ? "0 0 0 1px var(--border)" : "none",
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <RangeSelector available={bundle?.availableRanges} />
       </div>
       {status === "loading" || status === "idle" ? (
         <ChartSkeleton />
@@ -222,21 +266,55 @@ export function OverlayChart({ ticker, marketIds, children, className }: Overlay
           ))}
           {stock && domain ? (
             <div className="flex flex-1 flex-col gap-2 overflow-y-auto">
-              <PricePanel stock={stock} domain={domain} color="var(--text-primary)">
-                {children}
-              </PricePanel>
-              {markets.length > 0 && (
-                <OddsPanel markets={markets} domain={domain} colorById={colorById} showTimeAxis={!relationshipHasChart} />
+              {view === "main" ? (
+                <>
+                  <PricePanel
+                    stock={stock}
+                    domain={domain}
+                    color="var(--text-primary)"
+                    height={markets.length > 0 ? 190 : 340}
+                  >
+                    {children}
+                  </PricePanel>
+                  {markets.length > 0 && (
+                    <>
+                      <div
+                        className="flex items-center justify-between px-1 text-xs"
+                        style={{ color: "var(--text-tertiary)" }}
+                      >
+                        <span className="font-medium uppercase tracking-wide">Odds</span>
+                        <label className="flex cursor-pointer items-center gap-1.5">
+                          <input type="checkbox" checked={fitOdds} onChange={(e) => setFitOdds(e.target.checked)} />
+                          Zoom to data
+                        </label>
+                      </div>
+                      <OddsPanel
+                        markets={markets}
+                        domain={domain}
+                        colorById={colorById}
+                        showTimeAxis
+                        height={320}
+                        fit={fitOdds}
+                      />
+                    </>
+                  )}
+                </>
+              ) : (
+                <>
+                  <RelationshipPanel
+                    result={relationship}
+                    markets={markets}
+                    selectedId={relationshipMarket?.id ?? null}
+                    onSelect={setRelationshipPick}
+                    domain={domain}
+                    chartHeight={300}
+                    color={
+                      relationshipMarket ? (colorById.get(relationshipMarket.id) ?? "var(--accent)") : "var(--accent)"
+                    }
+                  />
+                  <MethodsNote />
+                </>
               )}
-              <RelationshipPanel
-                result={relationship}
-                markets={markets}
-                selectedId={relationshipMarket?.id ?? null}
-                onSelect={setRelationshipPick}
-                domain={domain}
-                color={relationshipMarket ? (colorById.get(relationshipMarket.id) ?? "var(--accent)") : "var(--accent)"}
-              />
-              <MethodsNote />
             </div>
           ) : (
             <div className="flex flex-1 items-center justify-center" style={{ color: "var(--text-secondary)" }}>
@@ -254,11 +332,27 @@ function MethodsNote() {
     <details className="px-1 text-xs" style={{ color: "var(--text-tertiary)" }}>
       <summary className="cursor-pointer">Methods</summary>
       <ul className="mt-1 list-disc space-y-1 pl-4">
-        <li>Returns, not levels: prices and odds both trend, so correlating levels finds shared drift rather than co-movement. We correlate log returns (stock) with changes in logit odds.</li>
-        <li>Delta-logit: a move from 94% to 97% carries more information than 50% to 53%; the logit stretches the ends of the 0-100 scale so equal changes mean roughly equal evidence.</li>
-        <li>SPY-adjusted: the stock's SPY-explained return (fit by regression over the window) is removed, so the result is the stock-specific part, not just "both follow the market".</li>
-        <li>95% band: Fisher z-transform of r with n = rolling window; it is skewed near +/-1, unlike r plus or minus a constant.</li>
-        <li>Limitation: gaps are forward-filled, so odds with no trade repeat their last value and show a change of exactly 0. This pulls r toward 0 in thin markets; lead-lag steps are grid steps, not fixed durations. The best lag is picked from 13 candidates, so treat it as exploratory.</li>
+        <li>
+          Returns, not levels: prices and odds both trend, so correlating levels finds shared drift rather than
+          co-movement. We correlate log returns (stock) with changes in logit odds.
+        </li>
+        <li>
+          Delta-logit: a move from 94% to 97% carries more information than 50% to 53%; the logit stretches the ends of
+          the 0-100 scale so equal changes mean roughly equal evidence.
+        </li>
+        <li>
+          SPY-adjusted: the stock's SPY-explained return (fit by regression over the window) is removed, so the result
+          is the stock-specific part, not just "both follow the market".
+        </li>
+        <li>
+          95% band: Fisher z-transform of r with n = rolling window; it is skewed near +/-1, unlike r plus or minus a
+          constant.
+        </li>
+        <li>
+          Limitation: gaps are forward-filled, so odds with no trade repeat their last value and show a change of
+          exactly 0. This pulls r toward 0 in thin markets; lead-lag steps are grid steps, not fixed durations. The best
+          lag is picked from 13 candidates, so treat it as exploratory.
+        </li>
       </ul>
     </details>
   );

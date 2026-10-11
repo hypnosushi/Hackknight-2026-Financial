@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { WorkspaceProvider } from "../features/workspace/WorkspaceProvider";
 import { TickerInput, GraphCanvas } from "../features/workspace/graph";
 import { PredictionMarketPanel } from "../features/workspace/graph/PredictionMarketPanel";
@@ -6,6 +7,7 @@ import {
   WorkspaceTransition,
   OverlayChart,
   EvidenceSidebar,
+  type ChartView,
   EvidenceDrawer,
   QueryCard,
 } from "../features/workspace/market-view";
@@ -40,22 +42,32 @@ function GraphColumn() {
 }
 
 function MarketViewColumn() {
+  const [view, setView] = useState<ChartView>("main");
+  // The correlation chart doesn't draw evidence markers, so the evidence
+  // sidebar is hidden there and the chart takes its width.
+  const showEvidence = view === "main";
+
   return (
     <div className="flex h-full w-full">
       {/* pl-20 (not p-6 on all sides): the projects rail overlays this pane at
           a higher z-index, so content needs clearance from the true left edge.
-          No title row, so the chart gets the height; the save button sits
-          right-aligned above it. */}
-      <div className="flex min-w-0 flex-1 flex-col gap-5 overflow-y-auto py-6 pl-20 pr-6">
-        <div className="flex justify-end">
-          <SaveProjectButton />
+          The scroll area has no header row, so the chart gets the full height;
+          Save floats bottom-left of this column (its popover opens upward),
+          and pb-20 lets the last content scroll clear of it. */}
+      <div className="relative min-w-0 flex-1">
+        <div className="flex h-full flex-col gap-5 overflow-y-auto py-6 pb-20 pl-20 pr-6">
+          <OverlayChart view={view} onViewChange={setView} />
+          <QueryCard />
         </div>
-        <OverlayChart />
-        <QueryCard />
+        <div className="absolute bottom-6 left-20 z-10">
+          <SaveProjectButton placement="above" align="left" />
+        </div>
       </div>
-      <aside className="h-full w-80 shrink-0">
-        <EvidenceSidebar />
-      </aside>
+      {showEvidence && (
+        <aside className="h-full w-80 shrink-0">
+          <EvidenceSidebar />
+        </aside>
+      )}
     </div>
   );
 }
