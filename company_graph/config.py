@@ -17,6 +17,8 @@ class Config:
     graph_max_linked: int = 12           # most linked companies per graph
     graph_news_ttl_hours: float = 6      # how long one company's news result is reused
     graph_news_daily_budget: int = 40    # most NewsAPI requests this feature may make per day
+    graph_board_ttl_days: float = 7      # how long a stored board is reused before a rebuild
+    graph_board_max_filings: int = 40    # most Form 3 / 4 filings read per board run (newest first)
     graph_fake: int = 0                  # 1 = serve fixtures, call nothing outside
     graph_llm_provider: str = "openrouter"  # "openrouter" (the team's client) or "anthropic" (ANTHROPIC_API_KEY)
     graph_llm_model: str = DEFAULT_MODEL  # OpenRouter model id; the team default lives in backend/llm/client.py
@@ -38,6 +40,10 @@ class Config:
     @property
     def link_ttl_s(self) -> float:
         return self.graph_link_ttl_days * 86400
+
+    @property
+    def board_ttl_s(self) -> float:
+        return self.graph_board_ttl_days * 86400
 
     @property
     def event_window_s(self) -> float:
@@ -69,4 +75,6 @@ def load() -> Config:
         raise SystemExit(f"GRAPH_LLM_PROVIDER must be openrouter or anthropic, got {cfg.graph_llm_provider!r}")
     if cfg.graph_max_linked < 1:
         raise SystemExit(f"GRAPH_MAX_LINKED must be at least 1, got {cfg.graph_max_linked}")
+    if cfg.graph_board_max_filings < 1:
+        raise SystemExit(f"GRAPH_BOARD_MAX_FILINGS must be at least 1, got {cfg.graph_board_max_filings}")
     return cfg

@@ -1,8 +1,9 @@
 # company_graph
 
 Backend for the Company Graph page: for a searched company, the companies it does business
-with (links, from SEC filings) and the linked companies a recent event may affect
-(highlights, from news and prediction-market alerts).
+with (links, from SEC filings), the linked companies a recent event may affect
+(highlights, from news and prediction-market alerts) and its directors (board members, from
+SEC insider ownership filings).
 
 Spec: `new_specs/ingestion/company-graph-tasks.md`.
 
@@ -19,7 +20,8 @@ Spec: `new_specs/ingestion/company-graph-tasks.md`.
 | `links.py` | F5 | `build_links(symbol)`: own 10-K, reverse full-text search, recent 8-Ks, sector fallback, into `entity_relationships`; `read_links` and `get_link_run` for the API |
 | `market_events.py` | F7 | Recent `alerts` (read-only) matched to the companies their markets name, saved to `graph_events` and `market_entities`. Entry point: `fetch_market_events` |
 | `highlights.py` | F8 | `build_highlights(symbol, session=...)`: refreshes news and market events for the graph, asks the model which linked companies each recent event involves, saves `graph_highlights` with a direction and the Alpaca price change |
-| `api.py` | F9 | `GET /graph/{ticker}` and `GET /companies/search`; starts link runs and highlight runs in the background |
+| `api.py` | F9 | `GET /graph/{ticker}`, `GET /graph/{ticker}/board` and `GET /companies/search`; starts link runs, highlight runs and board runs in the background |
+| `boards.py` | Board | `build_board(symbol)`: the company's recent Forms 3 and 4, parsed for reporting owners marked as directors, into `graph_board_seats`; `read_board` and `get_board_run` for the API. No model call |
 
 Not built yet: demo commands (F11).
 
@@ -38,6 +40,7 @@ Not built yet: demo commands (F11).
 - **Reading links (F5):** call `links.read_links(session, symbol, cfg.graph_max_linked)`, never a plain `entity_symbol = symbol` query. Reverse-lookup links are stored from the other company's side and `read_links` flips them.
 - **Run status (F5):** a timeout ends `done` with what was saved. A run that saved no filing link and hit any failure (SEC, search or the model) ends `error`, even if industry peers were saved, so an outage is not cached for the TTL. A `running` row older than 10 minutes counts as crashed.
 - **Which filings are read (F5):** the reverse search keeps one filing per other company and reads the 10 largest companies first. Size is the company's position in SEC's `company_tickers.json`, which SEC orders largest first (`CompanyDirectory.size_rank`). SEC's own order favours small companies that depend on the searched one.
+- **Industry on the graph (F9):** `GET /graph/{ticker}` gives the searched company and each node an `industry`, SEC's SIC description from `graph_company_profiles` (`api.read_industries`). A link run saves the description only for the company it ran for; companies found through the reverse search have the code alone and borrow the description from another company in the same response with that code. Otherwise `industry` is null. Search results and boards do not carry it.
 - **Industry peers (F5):** every run adds the 3 largest companies in SEC's list for the searched company's industry (SIC) code as `sector_peer` links (up to `GRAPH_MAX_LINKED` when there is no filing link), citing that list (`SecClient.ciks_by_sic`). Companies already linked from filings are not repeated.
 - **What counts as a relationship (F4):** the prompt excludes landlords and leases, lenders, insurers, auditors, law firms, shareholders, lawsuit opponents, ended relationships and anything hypothetical.
 - **SEC retries (F2):** 429, 500, 502, 503 and 504 are retried with backoff.
@@ -49,6 +52,12 @@ Not built yet: demo commands (F11).
 - **Remembered evaluations (F8):** which (searched company, event) pairs the model has judged, and with which candidates, live in `.cache/company_graph/highlight_evals.json` (`EvalStore`), pruned after `GRAPH_EVENT_WINDOW_DAYS`. An event is asked about again only when the searched company has gained a linked company since, or the last call failed. Deleting the file only costs repeated model calls: a highlight is never stored twice for the same (event, target). A JSON file rather than a table because `db.create_tables` lists its tables explicitly.
 - **Highlight runs (F8, F9):** `build_highlights` commits as it goes (each refresh step, then the highlights), so give it its own session. News and market refreshes are optional: no `NEWSAPI_KEY`, no `alerts` table or any failure is logged and skipped. At most `MAX_EVENTS_PER_RUN` (40) events, newest first, go to the model per run, 4 at a time: one model call per new event.
 - **API status with highlights (F9):** once links are done, the first request (and the first after `GRAPH_NEWS_TTL_HOURS`, or `ERROR_RETRY_S` after a failed run) starts `build_highlights` as a background task with its own session and answers `running` with the links; at most one highlight task per company in a process (`api._HIGHLIGHT_RUNS`; last end times in `api._HIGHLIGHTS_DONE`, in memory). A failed highlight run is logged and the graph is `done` with the highlights already stored.
+
+- **Board source (Board):** Forms 3 and 4 (and their amendments), which every director and officer files, not the proxy statement: the filing is structured XML, so no model reads it. `SecClient.fetch_raw` returns the XML; `fetch_text` would strip the tags. SEC lists the primary document as the rendered view (`xslF345X05/form4.xml`); the XML is the same file name without that folder (`boards.raw_xml_document`). A filing whose issuer is another company (the searched company reporting its own stake in someone else) is skipped.
+- **Person identity (Board):** a person is their own SEC CIK (`person_cik`, shown as `cik-0001234567`), which is the same in every company's filings. Two seats with one `person_cik` are one person on two boards; names are never compared. Board seats are not in `entities` or `entity_relationships`: `read_links` and the highlight builder assume every relationship row is company to company.
+- **Who is on the board (Board):** per person the newest filing read decides, and only people it marks `isDirector` are kept (`boards.pick_directors`). The role is the officer title when there is one, otherwise "Director". A run reads the newest `GRAPH_BOARD_MAX_FILINGS` filings of the last 15 months (`boards.LOOKBACK_DAYS`). A stored seat is deleted only when a newer filing says the person is not a director or its filing is older than the lookback, so a director missed by one run's cap is kept. A director who left stays until then.
+- **Names (Board):** filed names are "LAST FIRST MIDDLE"; `boards.display_name` shows "First Middle Last" and `raw_name` keeps the filed spelling. The first word is taken as the surname, so a two-word surname comes out wrong.
+- **Board runs (Board, F9):** `build_board` commits (the `running` row, then the seats and the final status), so give it its own session, and it shares one `SecClient` per run like a link run. Status lives in `graph_board_runs`, never `graph_link_runs`, and reuses `links.is_fresh` / `is_in_progress`: fresh for `GRAPH_BOARD_TTL_DAYS`, a `running` row older than 10 minutes counts as crashed. No Form 3 / 4 filings (many foreign issuers) ends `done` with no members. A timeout ends `done` with what was read. A run that read no filing and hit any failure ends `error`, reported for `ERROR_RETRY_S` and then retried. At most one board task per company in a process (`api._BOARD_RUNS`). The board endpoint never starts a link or highlight run.
 
 ## Setup
 
@@ -67,6 +76,7 @@ ALPACA_API_SECRET_KEY=...
 # Optional, defaults in config.py:
 # GRAPH_LINK_TTL_DAYS=7  GRAPH_EVENT_WINDOW_DAYS=7  GRAPH_MAX_LINKED=12
 # GRAPH_NEWS_TTL_HOURS=6  GRAPH_NEWS_DAILY_BUDGET=40  GRAPH_FAKE=0  GRAPH_LLM_MODEL=...
+# GRAPH_BOARD_TTL_DAYS=7  GRAPH_BOARD_MAX_FILINGS=40
 ```
 
 To check the extractor against the real model (it costs a few model calls):
@@ -104,6 +114,8 @@ async with make_engine(url).begin() as conn:
 | `graph_processed_filings` | no | Filings already read |
 | `graph_events` | no | News and market events, last 7 days |
 | `graph_highlights` | no | Linked companies an event may affect |
+| `graph_board_runs` | no | Board-building status per company |
+| `graph_board_seats` | no | Directors per company, one row per (company, person CIK) |
 
 No table has a foreign key to `markets` or `alerts`: `python -m backend.ingestion.reset_db`
 drops those with CASCADE. Never run `reset_db` for this feature, and never write to
@@ -115,6 +127,13 @@ drops those with CASCADE. Never run `reset_db` for this feature, and never write
 `schemas.load_fixture`. The frontend has identical copies in
 `frontend/src/features/company-graph/fixtures/` for `VITE_GRAPH_FAKE=1`; a test fails if the
 two drift apart.
+
+`GET /graph/{ticker}/board` serves `board_fixtures/{TICKER}.json` through
+`schemas.load_board_fixture` (TSLA, AAPL, NVDA and some of their linked companies; any other
+ticker is an empty `done` board). They are in their own folder because every file in `fixtures/`
+must have a frontend copy. The people are invented, with ids outside the range SEC has issued
+(`cik-99900000xx`): never put a real person in a made-up board. Some sit on two fixture boards
+(TSLA and NVDA share one), so interlocks can be shown.
 
 ## Tests
 

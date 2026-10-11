@@ -236,6 +236,11 @@ class SecClient:
         """Any SEC JSON file (e.g. company_tickers.json), with the same User-Agent, limiter, retries and cache."""
         return json.loads(await self._get(url))
 
+    async def fetch_raw(self, url: str) -> str:
+        """Download a document as it is, markup included (e.g. the XML of a Form 3 or 4)."""
+        raw = await self._get(url)
+        return raw.decode("utf-8", errors="replace")
+
     async def fetch_text(self, url: str) -> str:
         """Download a filing document and return its visible text."""
         raw = await self._get(url)

@@ -428,6 +428,19 @@ def test_fetch_text_downloads_and_strips(tmp_path):
 # ---- full_text_search ----
 
 
+def test_fetch_raw_keeps_the_markup(tmp_path):
+    xml = "<ownershipDocument><issuer><issuerCik>0001318605</issuerCik></issuer></ownershipDocument>"
+
+    def handler(request):
+        return httpx.Response(200, text=xml)
+
+    async def run():
+        async with SecClient("me@example.com", cache_dir=tmp_path, transport=httpx.MockTransport(handler)) as sec:
+            return await sec.fetch_raw("https://www.sec.gov/Archives/edgar/data/1318605/000000012600000008/form4.xml")
+
+    assert asyncio.run(run()) == xml
+
+
 def test_full_text_search_params_and_parsing(tmp_path):
     seen = []
     body = {

@@ -10,7 +10,7 @@ from company_graph.schemas import FIXTURES_DIR, GraphResponse, fixture_tickers, 
 FRONTEND_FIXTURES = Path(__file__).resolve().parents[2] / "frontend/src/features/company-graph/fixtures"
 ENV_NAMES = ["GRAPH_LINK_TTL_DAYS", "GRAPH_EVENT_WINDOW_DAYS", "GRAPH_MAX_LINKED", "GRAPH_NEWS_TTL_HOURS",
              "GRAPH_NEWS_DAILY_BUDGET", "GRAPH_FAKE", "GRAPH_LLM_MODEL", "SEC_CONTACT_EMAIL", "NEWSAPI_KEY",
-             "DATABASE_URL"]
+             "DATABASE_URL", "GRAPH_BOARD_TTL_DAYS", "GRAPH_BOARD_MAX_FILINGS"]
 
 
 @pytest.fixture
@@ -27,6 +27,7 @@ def test_defaults_match_the_spec(clean_env):
     assert cfg.fake is False
     assert cfg.graph_llm_model == DEFAULT_MODEL
     assert cfg.link_ttl_s == 7 * 86400
+    assert (cfg.graph_board_ttl_days, cfg.graph_board_max_filings, cfg.board_ttl_s) == (7, 40, 7 * 86400)
 
 
 def test_env_overrides_each_setting_by_its_upper_case_name(clean_env):
@@ -41,7 +42,7 @@ def test_env_overrides_each_setting_by_its_upper_case_name(clean_env):
     assert cfg.sec_contact_email == "me@example.com"
 
 
-@pytest.mark.parametrize("name,value", [("GRAPH_FAKE", "2"), ("GRAPH_MAX_LINKED", "0")])
+@pytest.mark.parametrize("name,value", [("GRAPH_FAKE", "2"), ("GRAPH_MAX_LINKED", "0"), ("GRAPH_BOARD_MAX_FILINGS", "0")])
 def test_bad_values_stop_with_a_clear_message(clean_env, name, value):
     clean_env.setenv(name, value)
     with pytest.raises(SystemExit, match=name):
@@ -84,3 +85,13 @@ def test_backend_and_frontend_fixtures_are_identical():
         backend = json.loads((FIXTURES_DIR / f"{ticker}.json").read_text())
         frontend = json.loads((FRONTEND_FIXTURES / f"{ticker}.json").read_text())
         assert backend == frontend, f"{ticker}.json differs between company_graph/ and frontend/"
+
+
+def test_backend_and_frontend_board_fixtures_are_identical():
+    backend_dir = FIXTURES_DIR.parent / "board_fixtures"
+    frontend_dir = FRONTEND_FIXTURES.parent / "board-fixtures"
+    names = sorted(p.name for p in backend_dir.glob("*.json"))
+    assert names and names == sorted(p.name for p in frontend_dir.glob("*.json"))
+    for name in names:
+        assert json.loads((backend_dir / name).read_text()) == json.loads((frontend_dir / name).read_text()), \
+            f"{name} differs between company_graph/board_fixtures/ and frontend/"

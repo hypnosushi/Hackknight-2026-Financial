@@ -15,7 +15,7 @@ import { delay } from "./mockUtils";
  * - App Store antitrust pressure and EU Digital Markets Act compliance
  *   remain live, ongoing regulatory threads independent of any one case.
  * - Supply chain diversification out of China (India/Vietnam assembly) is
- *   a multi-year, still-developing theme relevant to the supplier/consumer
+ *   a multi-year, still-developing theme relevant to the supplier/customer
  *   edges in the mock graph.
  */
 const AAPL_TAGS = [
@@ -81,7 +81,7 @@ export async function generateTags(graph: CompanyGraph): Promise<string[]> {
     return delay(curated, 1400);
   }
 
-  const hasSupplyChain = graph.edges.some((e) => e.relationship === "supplier" || e.relationship === "consumer");
+  const hasSupplyChain = graph.edges.some((e) => e.relationship === "supplier" || e.relationship === "customer");
   const tags = [
     hasSupplyChain ? "supply chain disruption" : "market structure",
     "semiconductor exposure",
