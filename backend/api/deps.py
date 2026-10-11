@@ -2,10 +2,15 @@
 built once from .env rather than re-reading env vars on every request.
 """
 
+import asyncio
 import os
 from functools import lru_cache
 
 import httpx
+from fastapi import HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from backend.ingestion.common.db import make_engine
 
 from backend.ingestion.alpaca import AlpacaApiGateway
 from backend.ingestion.kalshi.kalshi import REST_URL as KALSHI_REST_URL
@@ -43,3 +48,22 @@ def get_news_gateway() -> NewsApiGateway | None:
     # clearly-marked mock data so the UI still works without a NewsAPI key.
     key = os.environ.get("NEWSAPI_KEY")
     return NewsApiGateway(api_key=key) if key else None
+
+
+_engine: AsyncEngine | None = None
+_engine_lock = asyncio.Lock()
+
+
+async def get_db_engine() -> AsyncEngine:
+    """The shared DB engine, built on the first request (like projects.py), so the API still
+    starts without DATABASE_URL. Read-only routers use it; the workers create the tables.
+    """
+    global _engine
+    if _engine is None:
+        async with _engine_lock:  # concurrent first requests must not each build an engine
+            if _engine is None:
+                url = os.environ.get("DATABASE_URL")
+                if not url:
+                    raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Set DATABASE_URL in .env")
+                _engine = make_engine(url)
+    return _engine

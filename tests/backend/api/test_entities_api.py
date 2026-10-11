@@ -34,7 +34,7 @@ def client(monkeypatch):
     for name, fn in [("autocomplete", autocomplete), ("get_entity", get_entity),
                      ("markets_for_entity", markets_for_entity)]:
         monkeypatch.setattr(entities.db, name, fn)
-    app.dependency_overrides[entities.get_engine] = lambda: None  # no database
+    app.dependency_overrides[entities.get_db_engine] = lambda: None  # no database
     test_client = TestClient(app)
     test_client.calls = calls
     yield test_client

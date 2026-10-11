@@ -54,7 +54,7 @@ def auth_headers(key_id: str, private_key) -> dict:
 
 
 # --- REST discovery -----------------------------------------------------------
-async def _get(client: httpx.AsyncClient, path: str, params: dict | None = None) -> dict:
+async def get_json(client: httpx.AsyncClient, path: str, params: dict | None = None) -> dict:
     """GET with backoff on 429 (rate limited)."""
     for attempt in range(RETRY_429 + 1):
         resp = await client.get(path, params=params)
@@ -68,7 +68,7 @@ async def _get(client: httpx.AsyncClient, path: str, params: dict | None = None)
 async def _paginate(client: httpx.AsyncClient, path: str, key: str, params: dict) -> list[dict]:
     items, cursor = [], ""
     while True:
-        data = await _get(client, path, {**params, "cursor": cursor})
+        data = await get_json(client, path, {**params, "cursor": cursor})
         items += data.get(key) or []
         cursor = data.get("cursor") or ""
         if not cursor:
@@ -112,7 +112,7 @@ async def discover_series(client: httpx.AsyncClient, series: str) -> list[dict]:
                               {"series_ticker": series, "status": "open", "limit": 1000})
     events = await _paginate(client, "/events", "events",
                              {"series_ticker": series, "status": "open", "limit": 200})
-    info = (await _get(client, f"/series/{series}")).get("series") or {}
+    info = (await get_json(client, f"/series/{series}")).get("series") or {}
 
     events_by_ticker = {e["event_ticker"]: e for e in events}
     return [market_row(m, events_by_ticker.get(m.get("event_ticker"), {}), series, info) for m in markets]
@@ -130,13 +130,28 @@ async def discover_categories(client: httpx.AsyncClient, categories: list[str], 
 
     info: dict[str, dict] = {}
     for category in categories:  # one request each: the endpoint returns the whole category
-        for s in (await _get(client, "/series", {"category": category})).get("series") or []:
+        for s in (await get_json(client, "/series", {"category": category})).get("series") or []:
             info[s["ticker"]] = s
     for s in wanted_series - info.keys():
-        info[s] = (await _get(client, f"/series/{s}")).get("series") or {}
+        info[s] = (await get_json(client, f"/series/{s}")).get("series") or {}
 
     return [market_row(m, e, e["series_ticker"], info.get(e["series_ticker"], {}))
             for e in events for m in e.get("markets") or [] if m.get("status") == "active"]
+
+
+async def fetch_market(client: httpx.AsyncClient, ticker: str) -> dict:
+    """One market's current details (`open_time`, `event_ticker`, prices...)."""
+    return (await get_json(client, f"/markets/{ticker}")).get("market") or {}
+
+
+async def fetch_candles(client: httpx.AsyncClient, series: str, ticker: str, start_ts: int, end_ts: int,
+                        interval_min: int) -> list[dict]:
+    """Candlesticks for [start_ts, end_ts], `interval_min` = 1, 60 or 1440. Kalshi returns only
+    periods it has data for, and at most 5,000 candles per request.
+    """
+    data = await get_json(client, f"/series/{series}/markets/{ticker}/candlesticks",
+                          {"start_ts": start_ts, "end_ts": end_ts, "period_interval": interval_min})
+    return data.get("candlesticks") or []
 
 
 def top_by_volume(rows: list[dict], limit: int, now: float) -> set[str]:
