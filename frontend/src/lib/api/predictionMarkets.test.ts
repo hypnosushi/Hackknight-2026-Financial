@@ -35,7 +35,7 @@ describe("fetchRecommendedMarkets", () => {
       ],
     });
     const result = await fetchRecommendedMarkets("XOM", ["oil", "ev"]);
-    expect(mockGet).toHaveBeenCalledWith("/entities/XOM/top-markets?tags=oil&tags=ev");
+    expect(mockGet).toHaveBeenCalledWith("/entities/XOM/top-markets?limit=10&tags=oil&tags=ev");
     expect(result.isSample).toBe(false);
     expect(result.markets[0]).toMatchObject({ id: "m1", source: "polymarket", title: "Will oil top $100?", tier: 3 });
     expect(result.markets[0].yesPrice).toBeUndefined(); // never fabricate a quote for real results

@@ -19,8 +19,8 @@ import { CompanyAlerts, LiveEventsList, useLiveAlerts } from "../alerts";
 import { GenerateButton } from "../markets";
 import { useWorkspace } from "../useWorkspace";
 
-/** The top half shows this many recommendations; the live list below needs the rest of the height. */
-const RECOMMENDED_MAX = 4;
+/** Recommendations shown (the list scrolls); matches the `limit` fetchRecommendedMarkets asks the backend for. */
+const RECOMMENDED_MAX = 10;
 /** A recommended market whose Yes price moved this many cents in 24h counts as a large move (flashes the searched company). */
 const LARGE_CHANGE_CENTS = 5;
 

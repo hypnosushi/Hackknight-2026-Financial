@@ -142,6 +142,9 @@ function toMarket(entry: CatalogEntry): PredictionMarket {
   return market as PredictionMarket;
 }
 
+/** Events asked of the top-markets route (its default is 3, its max 10). */
+export const RECOMMENDED_LIMIT = 10;
+
 /** Shape of GET /entities/{company}/top-markets (backend/api/entities.py::TopMarketsOut). */
 interface TopMarketsResponse {
   markets: {
@@ -179,7 +182,7 @@ export async function fetchRecommendedMarkets(
   tags: string[] = [],
 ): Promise<RecommendedMarkets> {
   if (!ticker) return { markets: [], isSample: false };
-  const params = new URLSearchParams();
+  const params = new URLSearchParams({ limit: String(RECOMMENDED_LIMIT) });
   for (const tag of tags) params.append("tags", tag); // repeated key: FastAPI's list[str] Query
   try {
     const data = await get<TopMarketsResponse>(
