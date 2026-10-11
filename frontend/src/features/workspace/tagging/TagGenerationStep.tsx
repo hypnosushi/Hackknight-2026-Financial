@@ -13,14 +13,15 @@ import { generateTags } from "../../../lib/api/tags";
  * like the chip row it resolves into, not a generic spinner, so the layout
  * doesn't jump and the user can see "this becomes tags" while it loads.
  *
- * Fires once per graph: when `state.graph` becomes available and
- * `tagsStatus` is still "idle", it kicks off the mocked Gemini call.
+ * Fires once per graph: when `state.graph` is complete (the backend builds
+ * it over several polled responses — tags for half a graph would be wrong)
+ * and `tagsStatus` is still "idle", it kicks off the mocked Gemini call.
  */
 export function TagGenerationStep() {
   const { state, dispatch } = useWorkspace();
 
   useEffect(() => {
-    if (!state.graph || state.tagsStatus !== "idle") return;
+    if (!state.graph || state.graphStatus === "loading" || state.tagsStatus !== "idle") return;
 
     let cancelled = false;
     dispatch({ type: "TAGS_STATUS", status: "loading" });
@@ -38,9 +39,9 @@ export function TagGenerationStep() {
     return () => {
       cancelled = true;
     };
-  }, [state.graph, state.tagsStatus, dispatch]);
+  }, [state.graph, state.graphStatus, state.tagsStatus, dispatch]);
 
-  if (!state.graph) return null;
+  if (!state.graph || state.graphStatus === "loading") return null;
 
   return (
     <section aria-label="Generated tags" className="flex flex-col gap-3">

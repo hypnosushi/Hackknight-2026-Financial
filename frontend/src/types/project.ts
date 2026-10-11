@@ -42,6 +42,12 @@ export interface WorkspaceState {
   queryResults: QueryResult[];
   activeProjectId: string | null;
   activeProjectName: string | null;
+  /**
+   * Bumped whenever the graph is *replaced* (new search, project opened, reset),
+   * as opposed to grown by a polled update. The canvas restarts its build-out
+   * animation on this, not on `graph` changing identity.
+   */
+  graphSession: number;
   /** Bumped on every save so the sidebar refetches even when the active id didn't change. */
   projectsRevision: number;
 }
@@ -80,5 +86,6 @@ export const initialWorkspaceState: WorkspaceState = {
   queryResults: [],
   activeProjectId: null,
   activeProjectName: null,
+  graphSession: 0,
   projectsRevision: 0,
 };

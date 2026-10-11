@@ -60,4 +60,20 @@ export interface CompanyGraphResponse {
   highlights: GraphHighlight[];
 }
 
+/** One director from GET /graph/{ticker}/board (mirrors schemas.BoardMemberOut). */
+export interface BoardMember {
+  /** "cik-" + the person's SEC id — the same on every board they sit on. */
+  id: string;
+  name: string;
+  role: string;
+  evidence_url: string;
+  filed_at: string;
+}
+
+export interface BoardResponse {
+  company: CompanyRef;
+  status: GraphStatus;
+  members: BoardMember[];
+}
+
 export type CompanySearchResponse = CompanyRef[];

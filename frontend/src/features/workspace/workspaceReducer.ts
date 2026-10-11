@@ -1,13 +1,16 @@
-import type { CompanyGraph } from "../../types/workspaceGraph";
+import type { GraphStatus } from "../../types/graph";
+import { normalizeGraph, type CompanyGraph } from "../../types/workspaceGraph";
 import type { MarketCard } from "../../types/market";
 import type { AsyncStatus, EvidenceAnnotation, Project, QueryResult, WorkspaceState } from "../../types/project";
 import { initialWorkspaceState } from "../../types/project";
 
 export type WorkspaceAction =
   | { type: "TICKER_SUBMITTED"; ticker: string }
+  | { type: "TICKER_CLEARED" } // back to the ticker prompt after a search that found nothing
   | { type: "GRAPH_STATUS"; status: AsyncStatus }
-  | { type: "GRAPH_LOADED"; graph: CompanyGraph }
-  | { type: "GRAPH_READY" } // all nodes finished their progressive reveal
+  // One per backend response: `status` "running" means more links are still coming.
+  | { type: "GRAPH_LOADED"; ticker: string; graph: CompanyGraph; status: GraphStatus }
+  | { type: "GRAPH_READY" } // graph complete and every company revealed
   | { type: "TAGS_STATUS"; status: AsyncStatus }
   | { type: "TAGS_LOADED"; tags: string[] }
   | { type: "MARKETS_STATUS"; status: AsyncStatus }
@@ -32,18 +35,36 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         ticker: action.ticker,
         stage: "building-graph",
         graphStatus: "loading",
+        graphSession: state.graphSession + 1,
         activeProjectId: state.activeProjectId,
         activeProjectName: state.activeProjectName,
+      };
+
+    case "TICKER_CLEARED":
+      // Like TICKER_SUBMITTED, this keeps the active project attached.
+      return {
+        ...initialWorkspaceState,
+        graphSession: state.graphSession + 1,
+        activeProjectId: state.activeProjectId,
+        activeProjectName: state.activeProjectName,
+        projectsRevision: state.projectsRevision,
       };
 
     case "GRAPH_STATUS":
       return { ...state, graphStatus: action.status };
 
-    case "GRAPH_LOADED":
-      return { ...state, graph: action.graph, graphStatus: "done" };
+    case "GRAPH_LOADED": {
+      // A response for a search the user has since moved on from — a poll
+      // that was in flight when they opened a project or searched again.
+      if (action.ticker !== state.ticker || state.stage === "market-view") return state;
+      const graphStatus = action.status === "running" ? "loading" : action.status;
+      return { ...state, graph: action.graph, graphStatus };
+    }
 
     case "GRAPH_READY":
-      return { ...state, stage: "graph-ready" };
+      // Only ever a step forward from the build-out: tag generation may
+      // already have moved the stage on by the time the last node lands.
+      return state.stage === "building-graph" ? { ...state, stage: "graph-ready" } : state;
 
     case "TAGS_STATUS":
       return { ...state, stage: "generating-tags", tagsStatus: action.status };
@@ -96,6 +117,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         // Nothing built yet — start at the ticker prompt, attached to this project.
         return {
           ...initialWorkspaceState,
+          graphSession: state.graphSession + 1,
           activeProjectId: action.project.id,
           activeProjectName: action.project.name,
         };
@@ -104,8 +126,10 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         ...initialWorkspaceState,
         stage: "market-view",
         ticker: action.project.ticker,
-        graph: action.project.graphSnapshot,
+        // Snapshots saved before the relationship rename carry the old names.
+        graph: normalizeGraph(action.project.graphSnapshot),
         graphStatus: "done",
+        graphSession: state.graphSession + 1,
         suggestedMarkets: action.project.suggestedMarkets,
         marketsStatus: "done",
         selectedMarketIds: action.project.selectedMarketIds,
@@ -123,7 +147,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       };
 
     case "RESET":
-      return initialWorkspaceState;
+      return { ...initialWorkspaceState, graphSession: state.graphSession + 1 };
 
     default:
       return state;

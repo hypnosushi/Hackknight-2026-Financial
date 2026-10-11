@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { ArrowRight, Buildings } from "@phosphor-icons/react";
+import { ArrowRight } from "@phosphor-icons/react";
 import { motion } from "motion/react";
 import { useWorkspace } from "../useWorkspace";
 
@@ -48,12 +48,7 @@ export function TickerInput() {
         transition={{ duration: 0.4, ease: "easeOut" }}
       >
         <form onSubmit={handleSubmit} className="flex flex-col items-center gap-4">
-          <div
-            className="flex h-11 w-11 items-center justify-center rounded-full"
-            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
-          >
-            <Buildings size={20} weight="duotone" style={{ color: "var(--accent)" }} />
-          </div>
+        
           <div
             className="flex w-full items-center gap-2 px-4 py-3"
             style={{
