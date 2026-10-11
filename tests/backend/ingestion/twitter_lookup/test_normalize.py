@@ -45,3 +45,11 @@ def test_normalize_batch_skips_malformed_tweets():
 
     assert len(items) == 1
     assert items[0].id == "1234567890"
+
+
+def test_entity_matcher_short_ticker_matches_only_in_capitals():
+    from backend.ingestion.twitter_lookup.entity_match import EntityAlias, EntityMatcher
+
+    matcher = EntityMatcher([EntityAlias(symbol="A", aliases=["Agilent"])])
+    assert matcher.match("what a day for chips") == []
+    assert matcher.match("$A and Agilent both up") == ["A"]

@@ -58,6 +58,12 @@ Rules:
 - A passing mention is not a relationship: the subject appearing in a list, an example, a market
   description, a lawsuit, an index or a sentence that does not connect it to the filer's business
   gets no relationship.
+- Report only current commercial relationships in the companies' main lines of business. These
+  are NOT relationships: landlord or tenant, property leases, lenders, banks, underwriters,
+  insurers, auditors, law firms, shareholders or fund holdings, lawsuit opponents, charities,
+  relationships that ended, and anything possible, planned or hypothetical ("may", "could",
+  "if it becomes", "in discussions").
+- Use competitor only when the filer itself names the subject as a competitor today.
 - If the passage states no relationship, return an empty list: {"relationships": []}.
 - Each summary is one short factual sentence about what the passage states, naming both companies.
 - Write facts only. Never predict stock prices or business results, never give an opinion on the

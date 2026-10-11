@@ -111,7 +111,7 @@ Built on the existing tables rather than new copies of them:
   - `map_version`: seed file version used for this enrichment
   - `attempts`: failures in a row under that version (retries stop at 3)
 
-API endpoints (`uv run uvicorn backend.api.app:app`, port 8000):
+API endpoints (`uv run uvicorn backend.main:app`, port 8000):
 
 - `GET /entities/autocomplete?q=<partial>[&category=][&limit=10]`:
   matching map entities (`id`, `name`, `category`), case-insensitive

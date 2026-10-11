@@ -90,8 +90,9 @@ them.
   TS/JS decision.)
 - **Frontend build tooling** — Vite, Next.js, Create React App, something
   else? "React" alone doesn't settle this.
-- **Local Postgres** — run via Docker locally, or a hosted free tier
-  (Supabase/Neon/Railway) shared by the team?
+- **Local Postgres** — resolved for the hackathon: a shared hosted Neon
+  free-tier instance, see
+  [`shared-db-hosting.md`](../new_specs/shared-db-hosting.md).
 
 ## Acceptance Criteria
 

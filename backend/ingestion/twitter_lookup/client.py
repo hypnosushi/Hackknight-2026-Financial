@@ -18,6 +18,7 @@ TWEET_FIELDS = "created_at,public_metrics,author_id"
 USER_FIELDS = "username"
 EXPANSIONS = "author_id"
 PAGE_SIZE = 100
+MAX_PAGES = 32  # 32 * 100 = 3,200, matching X's own user-timeline cap
 
 # X's recent/429/5xx errors are worth a retry upstream; anything else
 # (bad query, bad auth, not found) is a caller bug or a dead credential.
@@ -37,26 +38,57 @@ class TwitterApiGateway:
         )
 
     def fetch_user_timeline(self, username: str, start: datetime, end: datetime) -> list[dict]:
-        """One account's tweets in [start, end], most recent ~3,200 only
-        (X's user-timeline cap — see new_specs/ingestion/twitter-lookup.md
-        Resolved open questions).
+        """One account's tweets in [start, end], following pagination
+        (`meta.next_token`) up to X's own ~3,200-tweet user-timeline cap
+        (`MAX_PAGES` pages of `PAGE_SIZE` each) — see
+        new_specs/ingestion/twitter-lookup.md Resolved open questions.
         """
         user_id = self._resolve_user_id(username)
-        resp = self._client.get(
+        return self._paginate(
             f"/users/{user_id}/tweets",
-            params=self._params(start, end),
+            self._params(start, end),
+            token_param="pagination_token",
+            fallback_author=username.lstrip("@"),
         )
-        return self._tweets_with_authors(resp, fallback_author=username.lstrip("@"))
 
-    def fetch_recent_search(self, query: str, start: datetime, end: datetime) -> list[dict]:
-        """Tweets matching `query` in [start, end]. X's recent-search only
-        covers roughly the last 7 days.
+    def fetch_recent_search(
+        self,
+        query: str,
+        start: datetime,
+        end: datetime,
+        max_pages: int = MAX_PAGES,
+        sort_order: str | None = None,
+    ) -> list[dict]:
+        """Tweets matching `query` in [start, end], following pagination
+        up to `max_pages` pages. X's recent-search only covers roughly
+        the last 7 days regardless of how far back `start` is set.
+        `sort_order` is X's "recency" (its default) or "relevancy".
         """
-        resp = self._client.get(
-            "/tweets/search/recent",
-            params={**self._params(start, end), "query": query},
-        )
-        return self._tweets_with_authors(resp)
+        params = {**self._params(start, end), "query": query}
+        if sort_order:
+            params["sort_order"] = sort_order
+        return self._paginate("/tweets/search/recent", params, token_param="next_token", max_pages=max_pages)
+
+    def _paginate(
+        self,
+        path: str,
+        base_params: dict,
+        token_param: str,
+        fallback_author: str | None = None,
+        max_pages: int = MAX_PAGES,
+    ) -> list[dict]:
+        tweets: list[dict] = []
+        next_token = None
+        for _ in range(max_pages):
+            params = dict(base_params)
+            if next_token:
+                params[token_param] = next_token
+            body = self._raise_for_status(self._client.get(path, params=params))
+            tweets += self._tweets_with_authors(body, fallback_author=fallback_author)
+            next_token = (body.get("meta") or {}).get("next_token")
+            if not next_token:
+                break
+        return tweets
 
     def _resolve_user_id(self, username: str) -> str:
         resp = self._client.get(f"/users/by/username/{username.lstrip('@')}")
@@ -68,8 +100,8 @@ class TwitterApiGateway:
             )
         return user["id"]
 
-    def _tweets_with_authors(self, resp: httpx.Response, fallback_author: str | None = None) -> list[dict]:
-        body = self._raise_for_status(resp)
+    @staticmethod
+    def _tweets_with_authors(body: dict, fallback_author: str | None = None) -> list[dict]:
         tweets = body.get("data") or []
         users = {u["id"]: u["username"] for u in (body.get("includes") or {}).get("users", [])}
         for tweet in tweets:

@@ -13,14 +13,14 @@ market in it gets the same tags. Spec: `new_specs/market-search.md`.
 | Two-pass Jev flow | `enrich.py` (`enrich_event`) over `backend.classification.classify` |
 | Tables and queries | `db.py`; status table `backend/models/market_enrichment.py` |
 | Worker | `__main__.py` |
-| API | `backend/api/entities.py`, served by `backend/api/app.py` |
+| API | `backend/api/entities.py`, mounted in `backend/main.py` |
 
 ## Run
 
 ```
 uv run python -m backend.enrichment          # keeps running, sweeps every ENRICH_SWEEP_S
 uv run python -m backend.enrichment --once   # one batch, then exit
-uv run uvicorn backend.api.app:app           # API on http://localhost:8000
+uv run uvicorn backend.main:app           # API on http://localhost:8000
 ```
 
 Needs `DATABASE_URL` and `OPENROUTER` in `.env`. Optional settings are listed in `.env.example`.
@@ -71,8 +71,7 @@ but its links disappear as markets are re-enriched.
   outcome_label, event_title, status, close_time, url}, ...]}`, open markets first. 404 for an
   unknown id. `id` is URL-encoded (`/entities/United%20States/markets`).
 
-CORS allows `http://localhost:5173` (Vite) by default. Set `API_CORS_ORIGINS` (comma-separated)
-to change it.
+CORS is the app's (`backend/main.py`): the Vite dev server is allowed.
 
 ## Tests
 

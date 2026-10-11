@@ -7,7 +7,7 @@ from backend.models.base import Base
 
 
 class GraphEvent(Base):
-    """A recent news story or prediction-market move about one company. Input to the highlight builder.
+    """A recent news story, X post or prediction-market move about one company. Input to the highlight builder.
 
     `alert_id` points at `alerts.id` without a foreign key: reset_db drops `alerts` with CASCADE.
     """
@@ -17,7 +17,7 @@ class GraphEvent(Base):
 
     id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
     entity_symbol: Mapped[str] = mapped_column(Text)
-    source: Mapped[str] = mapped_column(Text)  # 'news' | 'market'
+    source: Mapped[str] = mapped_column(Text)  # 'news' | 'market' | 'social'
     event_type: Mapped[str] = mapped_column(Text)  # product_launch|contract|earnings_surprise|recall|acquisition|odds_move
     title: Mapped[str] = mapped_column(Text)
     url: Mapped[str] = mapped_column(Text)

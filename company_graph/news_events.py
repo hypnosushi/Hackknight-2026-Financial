@@ -10,7 +10,9 @@ Flow, for one search:
    Requests stop once GRAPH_NEWS_DAILY_BUDGET have been made that UTC day.
 2. Articles are deduplicated by URL and by normalized title (syndicated copies of one story).
 3. `classify_event(item)` asks Jev for one of `schemas.NEWS_EVENT_TYPES`, or `none` (opinion,
-   roundups, anything else), which maps to None.
+   roundups, anything else), which maps to None. With GRAPH_LLM_PROVIDER=anthropic it asks Claude
+   through `llm.complete` instead, with the same labels and descriptions, so F6 runs without an
+   OpenRouter key.
 4. `save_news_events(session, events)` adds one `graph_events` row per (company, story), skipping
    rows that already exist. It does not commit.
 
@@ -20,7 +22,7 @@ The per-company news result, the Jev label per URL and the daily request count h
 live in one small JSON file, .cache/company_graph/news_cache.json (`NewsStore`). Losing it costs at
 most a few repeated requests.
 
-poll_news and Jev are synchronous, so both run through asyncio.to_thread.
+poll_news, Jev and llm.complete are synchronous, so they run through asyncio.to_thread.
 """
 
 from __future__ import annotations
@@ -32,13 +34,17 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any, Callable, Iterable, Literal, Sequence
 from urllib.parse import urlsplit, urlunsplit
+
+from pydantic import BaseModel
 
 from backend.classification import ChoiceSpec, JevError, classify
 from backend.entities import EntityAlias
 from backend.ingestion.news_api import ContentItem, NewsApiError, NewsQueryFilters, poll_news
 from company_graph import config as config_mod
+from company_graph import llm
+from company_graph.llm import LlmError
 from company_graph.schemas import NEWS_EVENT_TYPES
 
 logger = logging.getLogger(__name__)
@@ -88,8 +94,9 @@ class NewsStore:
     Writes go through a temporary file and a rename, so a crash never leaves half a file.
     """
 
-    def __init__(self, path: Path | str = CACHE_FILE):
+    def __init__(self, path: Path | str = CACHE_FILE, item_model: type[BaseModel] = ContentItem):
         self.path = Path(path)
+        self.item_model = item_model  # the social step (F12) stores tweets with the same shape
         self.data: dict[str, Any] = {"budget": {}, "companies": {}, "labels": {}}
         if self.path.exists():
             try:
@@ -114,13 +121,13 @@ class NewsStore:
         self.data["budget"] = {"date": now.date().isoformat(), "count": self.requests_today(now) + 1}
 
     # per-company results
-    def cached(self, symbol: str) -> tuple[datetime, list[ContentItem]] | None:
+    def cached(self, symbol: str) -> tuple[datetime, list[BaseModel]] | None:
         entry = (self.data.get("companies") or {}).get(symbol)
         if not entry:
             return None
         try:
             fetched = datetime.fromisoformat(entry["fetched_at"])
-            items = [ContentItem.model_validate(i) for i in entry.get("items", [])]
+            items = [self.item_model.model_validate(i) for i in entry.get("items", [])]
         except (KeyError, ValueError, TypeError):
             return None
         return fetched, items
@@ -363,13 +370,40 @@ async def fetch_news_events(
 EVENT_SPEC = ChoiceSpec(question=EVENT_QUESTION, labels=EVENT_LABELS)
 
 
-def classify_event(item: ContentItem, classifier: Callable = classify) -> str | None:
-    """Jev's event type for one article, or None for opinion pieces, roundups and anything else.
+MODEL_TEXT_CHARS = 4000  # article text sent to the model (NewsAPI's `content` is short anyway)
 
-    Synchronous (one Jev call). Raises JevError if Jev fails.
+EVENT_SYSTEM = (
+    "You label one news article with the company event it reports as fact. Answer with exactly one "
+    "label from the list. Pick \"none\" for opinion or analysis pieces, market roundups, stock-price "
+    "moves, listicles, rumours, and anything that is not one of the other events.\n\nLabels:\n"
+    + "\n".join(f"- {k}: {v}" for k, v in EVENT_LABELS.items())
+)
+
+
+class EventLabel(BaseModel):
+    """The model's answer when GRAPH_LLM_PROVIDER=anthropic: one of EVENT_LABELS."""
+
+    label: Literal[tuple(EVENT_LABELS)]  # type: ignore[valid-type]
+
+
+def event_prompt(item: ContentItem) -> str:
+    text = (item.text or "").strip()[:MODEL_TEXT_CHARS]
+    return f"{EVENT_QUESTION}\n\nTitle: {item.title}\n\nText: {text or '(none)'}"
+
+
+def classify_event(item: ContentItem, classifier: Callable = classify, provider: str | None = None) -> str | None:
+    """The event type for one article, or None for opinion pieces, roundups and anything else.
+
+    `provider` defaults to GRAPH_LLM_PROVIDER. "anthropic": one `llm.complete` call (raises LlmError).
+    Anything else: one Jev call through `classifier`, as before (raises JevError).
+    Synchronous.
     """
-    result = classifier(item.title, item.text, EVENT_SPEC)
-    label = result.label
+    if provider is None:
+        provider = config_mod.load().graph_llm_provider
+    if provider == "anthropic":
+        label = llm.complete(EVENT_SYSTEM, event_prompt(item), EventLabel).label
+    else:
+        label = classifier(item.title, item.text, EVENT_SPEC).label
     return label if label in NEWS_EVENT_TYPES else None
 
 
@@ -380,13 +414,17 @@ async def classify_items(
     classifier: Callable = classify,
     now: datetime | None = None,
     max_concurrency: int = 8,
+    provider: str | None = None,
 ) -> list[NewsEvent]:
-    """Type each item through Jev (on worker threads), reusing labels stored for its URL.
+    """Type each item through Jev or the model (on worker threads), reusing labels stored for its URL.
 
-    Items Jev labels `none` produce no event. An item whose Jev call fails is skipped this time and
-    not remembered, so the next search retries it.
+    `provider` defaults to GRAPH_LLM_PROVIDER (see classify_event). Items labelled `none` produce no
+    event. An item whose call fails is skipped this time and not remembered, so the next search
+    retries it.
     """
     now = now or _utcnow()
+    if provider is None:
+        provider = config_mod.load().graph_llm_provider
     sem = asyncio.Semaphore(max_concurrency)
 
     async def one(item: ContentItem) -> tuple[bool, str | None]:
@@ -396,9 +434,9 @@ async def classify_items(
                 return True, label
         async with sem:
             try:
-                return False, await asyncio.to_thread(classify_event, item, classifier)
-            except JevError as exc:
-                logger.warning("Jev failed for %s: %s", item.url, exc)
+                return False, await asyncio.to_thread(classify_event, item, classifier, provider)
+            except (JevError, LlmError) as exc:
+                logger.warning("event typing failed for %s: %s", item.url, exc)
                 return True, "__error__"
 
     results = await asyncio.gather(*(one(i) for i in items))
@@ -416,8 +454,8 @@ async def classify_items(
 
 # --- saving --------------------------------------------------------------------------------------
 
-async def save_news_events(session, events: Sequence[NewsEvent], event_model=None) -> list:
-    """Add one `graph_events` row (source "news") per (symbol, story) not already stored.
+async def save_news_events(session, events: Sequence[NewsEvent], event_model=None, source: str = "news") -> list:
+    """Add one `graph_events` row (source `source`, "news" by default) per (symbol, story) not already stored.
 
     `session` is a SQLAlchemy AsyncSession (or anything with async `execute`, `flush` and `add`).
     Flushes but does not commit. Returns the new rows.
@@ -440,7 +478,7 @@ async def save_news_events(session, events: Sequence[NewsEvent], event_model=Non
     for (sym, url), e in pairs.items():
         if (sym, url) in existing:
             continue
-        row = event_model(entity_symbol=sym, source="news", event_type=e.event_type, title=e.title,
+        row = event_model(entity_symbol=sym, source=source, event_type=e.event_type, title=e.title,
                           url=url, occurred_at=e.occurred_at, alert_id=None)
         session.add(row)
         rows.append(row)
@@ -472,7 +510,8 @@ async def refresh_news_events(
     now = now or _utcnow()
     items = await fetch_news_events(symbols, cfg=cfg, store=store, gateway=gateway, poll=poll,
                                     aliases=aliases, now=now)
-    events = await classify_items(items, store=store, classifier=classifier, now=now)
+    events = await classify_items(items, store=store, classifier=classifier, now=now,
+                                  provider=cfg.graph_llm_provider)
     async with _STORE_LOCK:
         store.save()  # keep the new Jev labels
     await save_news_events(session, events)

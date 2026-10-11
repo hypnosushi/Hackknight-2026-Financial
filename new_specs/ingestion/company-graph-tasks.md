@@ -1,12 +1,12 @@
-# Company Graph page: feature breakdown for coding agents (v3)
+# Company Graph page: feature breakdown for coding agents (v4)
 
-Checked against `main` at commit `9d6f7fb` (2026-10-10). v3 updates v2 for the `backend/` restructure, the team's new LLM client, Jev and Alpaca packages, and the features already built (F0 to F3, F10).
+Checked against `main` at commit `ebb086c` (2026-10-10). v4 records that F0 to F10 are built and running on real data (SEC filings, Claude, NewsAPI, Alpaca), the option to call Claude directly, and what the first live runs showed. Only F11 (demo tools) is left.
 
 **How to use it:** give the agent everything above the first feature section, plus exactly one feature section.
 
 ## What the page does
 
-The user searches for any listed company. The page shows a graph of the companies it does business with (links), and highlights the linked companies that a recent event may affect (highlights). Links come from SEC filings and are stored for days. Highlights come from news and from prediction market alerts in the last 7 days, and are refreshed on every search.
+The user searches for any listed company. The page shows a graph of the companies it does business with (links), and highlights the linked companies that a recent event may affect (highlights). Links come from SEC filings and are stored for days. Highlights come from news and from prediction market alerts in the last 7 days, and are refreshed at most every `GRAPH_NEWS_TTL_HOURS` per company.
 
 This feature replaces the deleted `new_specs/company-network.md` and answers its open question: the graph is built from supply-chain and competitor relationships stated in SEC filings, with a same-industry fallback.
 
@@ -19,13 +19,36 @@ This feature replaces the deleted `new_specs/company-network.md` and answers its
 | F2 SEC client | Done |
 | F3 Filing trimmer | Done |
 | F4 Relationship extractor | Done |
-| F5 Link finder | Done (live check not yet run) |
+| F5 Link finder | Done, verified live |
 | F6 News events | Done |
 | F7 Prediction market events | Done |
-| F8 Highlight builder | Not started, unblocked |
-| F9 Graph API | Not started, waits on F5, F8 and the FastAPI decision |
-| F10 Graph page | Done (works in fake mode) |
-| F11 Demo tools | Not started, waits on F9 |
+| F8 Highlight builder | Done, verified live |
+| F9 Graph API | Done, verified live |
+| F10 Graph page | Done, works against the real API |
+| F11 Demo tools | Not started, unblocked |
+| F12 X posts as events | Done, verified live (`company_graph/social_events.py`) |
+
+## Live results (2026-10-10)
+
+Run locally against SEC, Claude (Anthropic API), NewsAPI and Alpaca, with a local Postgres:
+
+| Company | Links found | Notes |
+| --- | --- | --- |
+| NVDA | TSMC, Micron, SK Hynix, Fabrinet (suppliers); CoreWeave, Nebius, IREN (customers); Intel, Microsoft (partners) | 4 news highlights (TSMC, SK Hynix, Micron, Intel) with price changes |
+| TSM (20-F filer) | AMD, NVIDIA, Qualcomm, Broadcom, Analog Devices (customers); Lam Research, KLA (suppliers) | |
+| LLY | McKesson, Cencora, Cardinal Health (distributors); Incyte, AbCellera (partners); Novo Nordisk, Viking (competitors) | Needed the short-name fix below |
+| TSLA | CATL (supplier); Uber, Aurora, XPeng (competitors); GM, Toyota, Ferrari (industry peers) | Panasonic does not file with SEC, so it cannot appear |
+| AAPL | MP Materials (supplier), TD SYNNEX (distributor), app partners | Apple's 10-K names no suppliers, so links come from other companies' filings |
+| JPM | Bank of America, Citi, Capital One (industry peers) and 2 depositary relationships | Banks are thin: filings do not describe banking relationships the way they describe suppliers |
+
+Fixed during the live runs: SEC full-text search 500s are retried; reverse lookups read the largest companies first (one filing per company); industry peers are added on every run; the extractor prompt excludes landlords, lenders, lawsuits and hypotheticals; 215 SEC names produced broken search phrases ("JPMORGAN CHASE &", "CORP/OH/"); a run whose filings all failed is an error even when peers were saved.
+
+**Known limits:**
+- The page colours linked companies only. A highlight whose target is the searched company (news about a linked company that affects it) is stored but not shown on that company's own graph; it shows on the linked company's graph. Colouring the centre node would fix this.
+- Suppliers that do not file with SEC (Panasonic, CATL's own filings, private companies) only appear when another filing names them.
+- NewsAPI's free tier delays articles by about a day and includes small sites. Market highlights need the `alerts` table filled by the team's ingestion and alert detector.
+- X posts (F12) are noisier than news. Jev keeps only posts that state an event about the named company at 0.9 probability or more; in the first live run 1 of 21 posts for NVDA's graph was kept (GlobalFoundries' $2B agreement with TSMC). Each X search reads up to 100 posts, which X bills for, so it has its own daily budget.
+- The API keeps its run registries in memory: run one API process.
 
 ## What already exists (use it, do not rebuild it)
 
@@ -59,7 +82,6 @@ Owners are taken from git history.
 
 ## What does not exist yet
 
-- A FastAPI app. `fastapi` is not in `pyproject.toml`, and `architecture/tech-stack.md` only plans `backend/api/`.
 - Redis, pub/sub, or a WebSocket server. The page polls instead.
 - The `messages` and `message_entities` tables from `db-design.md`. This feature does not need them.
 - `contracts/`, `CLAUDE.md`, migrations.
@@ -68,7 +90,7 @@ Owners are taken from git history.
 
 | Decision | Blocks | Status |
 | --- | --- | --- |
-| Who creates the FastAPI app, and at what path? | F9 | **Open.** Default: F9 ships a router only, and whoever creates the app adds one `include_router` line. |
+| Who creates the FastAPI app, and at what path? | F9 | Resolved: ShabirZ added it. The app is `backend/main.py` (run with `uv run uvicorn backend.main:app --reload`), with one router per area in `backend/api/` (see `new_specs/fastapi.md`). CORS allows the Vite dev server. |
 | Is anyone else adding the `entities` model? | F0 | Resolved: F0 added it. |
 | May `entity_relationships` gain `summary` and `evidence_url`? | F0 | Resolved: added, and `db-design.md` updated. |
 | Which LLM provider? Who builds Jev? | F4, F6, F8 | Resolved: OpenRouter through `backend/llm`; Jev is `backend/classification`. |
@@ -148,23 +170,24 @@ The result is called a highlight, not a signal, because `alert_detector/signals.
 | `GRAPH_NEWS_TTL_HOURS` | 6 | How long one company's news result is reused |
 | `GRAPH_NEWS_DAILY_BUDGET` | 40 | Most NewsAPI requests this feature may make per day (the team-wide limit is 100) |
 | `GRAPH_FAKE` | 0 | When 1, serve fixture data and call no outside service |
-| `GRAPH_LLM_MODEL` | `backend/llm/client.py`'s `DEFAULT_MODEL` | OpenRouter model id for F4 and F8 |
+| `GRAPH_LLM_PROVIDER` | `openrouter` | `openrouter` (the team's client) or `anthropic` (Claude directly, through the Anthropic SDK) for F4, F6 typing and F8 |
+| `GRAPH_LLM_MODEL` | `backend/llm/client.py`'s `DEFAULT_MODEL` | OpenRouter model id (the default is retired; set this when using OpenRouter) |
+| `GRAPH_ANTHROPIC_MODEL` | `claude-opus-5-5` | Claude model id when `GRAPH_LLM_PROVIDER=anthropic`; `claude-haiku-5-5` costs about 1/40th |
+| `ANTHROPIC_API_KEY` | none | Read by the Anthropic SDK when `GRAPH_LLM_PROVIDER=anthropic` |
 | `SEC_CONTACT_EMAIL` | none | Sent in the SEC User-Agent header; required for any SEC call |
 | `NEWSAPI_KEY` | none | NewsAPI key, shared with the news ingestion |
 | `DATABASE_URL` | none | The team database |
-| `OPENROUTER` | none | Read by `backend/llm` and Jev directly, not by `config.py` |
-| `ALPACA_API_KEY_ID`, `ALPACA_API_SECRET_KEY` | none | Read for F8's price change |
+| `OPENROUTER` | none | Read by `backend/llm` and Jev directly, not by `config.py`; needed when the provider is `openrouter` |
+| `ALPACA_API_KEY_ID`, `ALPACA_API_SECRET_KEY` | none | Optional; read by F8 for the price change (null without them) |
 
 ## Build order
 
 | Step | Feature | Waits on |
 | --- | --- | --- |
-| Done | F0 to F7, F10 | |
-| 1 | F8 Highlight builder | Nothing |
-| 2 | F9 Graph API | F8 and the FastAPI decision |
-| 3 | F11 Demo tools | F9 |
+| Done | F0 to F10 | |
+| 1 | F11 Demo tools | Nothing |
 
-The fastest way to a real (not fake-mode) page is F9 with highlights left empty; F8 can follow.
+Suggested next, outside the original plan: colour the searched company when a highlight targets it (frontend), fit the graph to its box on load (frontend), and deploy (see the team's hosting plan).
 
 ---
 
@@ -230,6 +253,8 @@ The fastest way to a real (not fake-mode) page is F9 with highlights left empty;
 
 **Status:** done. **Files:** `company_graph/llm.py`, `company_graph/extract.py`
 
+**As built:** `llm.complete` uses the team's OpenRouter client by default, or Claude directly through the Anthropic SDK with `GRAPH_LLM_PROVIDER=anthropic` (structured outputs into the Pydantic model, low effort, server-side fallbacks where the model supports them). Failures are `LlmError` either way.
+
 **Build:**
 - `llm.py`: a thin wrapper, `complete(system, user, response_model)`, over the team's `backend.llm.client.complete_structured` with `model` set from `GRAPH_LLM_MODEL`, so the model can be swapped in one place. Every free-form model call in this feature (F4, F8) goes through it. It is synchronous; call it through `asyncio.to_thread`.
 - `extract(chunk, filer, subject) -> [relationship]`, with a Pydantic response model whose types come from `schemas.RELATIONSHIP_TYPES`. The prompt asks what business relationship between the filer and the subject the text states, and says to return an empty list when it states none.
@@ -239,9 +264,9 @@ The fastest way to a real (not fake-mode) page is F9 with highlights left empty;
 
 ## F5. Link finder
 
-**Status:** done; the live check is an opt-in test not yet run. **File:** `company_graph/links.py`
+**Status:** done, verified live on TSLA, AAPL, NVDA, TSM, JPM and LLY (10 to 25 seconds each). **File:** `company_graph/links.py`
 
-**As built:** links are stored from the filer's side, so read them with `read_links`, which flips reverse-lookup rows. Subjects in a company's own filings are found with F7's `find_companies`, so non-US counterparties named only there (such as CATL) are missed. 8-Ks are fetched and kept only if they show Item 1.01 or 2.01.
+**As built:** links are stored from the filer's side, so read them with `read_links`, which flips reverse-lookup rows. Subjects in a company's own filings are found with F7's `find_companies`, so non-US counterparties named only there (such as CATL) are missed. 8-Ks are fetched and kept only if they show Item 1.01 or 2.01. After the first live runs: reverse hits keep one filing per company and read the largest companies first; the 3 largest same-industry companies are always added as `sector_peer` (from SEC's company list by SIC code); annual reports include 20-F and 40-F; SEC 5xx errors are retried.
 
 **Build:** `build_links(symbol)` that
 1. Marks `graph_link_runs` as `running`. Skips the run when the last one is `done` and newer than `GRAPH_LINK_TTL_DAYS`.
@@ -259,7 +284,7 @@ Use one `SecClient` for the whole run, so its rate limiter covers every request.
 
 ## F6. News events
 
-**Status:** done. Fetching (`poll_news`) and classification (Jev) exist; this feature connects them and stores the result. **File:** `company_graph/news_events.py`
+**Status:** done. Fetching (`poll_news`) and classification (Jev) exist; this feature connects them and stores the result. With `GRAPH_LLM_PROVIDER=anthropic`, events are typed with Claude through `llm.complete` instead of Jev, using the same labels. **File:** `company_graph/news_events.py`
 
 NewsAPI limits, from `new_specs/ingestion/news-aggregator.md`: the free tier allows 100 requests per day for the whole team, articles arrive about 24 hours late, and article text is cut to about 200 characters.
 
@@ -290,7 +315,9 @@ Do not compare odds yourself. `market_prices` keeps only 30 minutes of rows, and
 
 ## F8. Highlight builder
 
-**Status:** not started, unblocked. Read links with `links.read_links`. **File:** `company_graph/highlights.py`
+**Status:** done, verified live. **File:** `company_graph/highlights.py`
+
+**As built:** `build_highlights` refreshes news (F6, skipped without `NEWSAPI_KEY`) and market events (F7) for the company and its linked companies, then makes one model call per new event (at most 40 per run, 4 at a time). An event about the searched company is offered with all its linked companies; an event about a linked company targets the searched company. Sector peers get a highlight (`may_face_pressure`) only when the model reports a clear competitive gain. Reasons that read like a forecast or trade advice are dropped. Events already judged are remembered in `.cache/company_graph/highlight_evals.json`, so they cost nothing on the next run. Price change comes from Alpaca, null on any problem.
 
 **Build:** `build_highlights(symbol)` that
 1. Loads the company's links, then the `graph_events` rows from the last `GRAPH_EVENT_WINDOW_DAYS` for the company and each linked company.
@@ -303,21 +330,22 @@ Do not compare odds yourself. `market_prices` keeps only 30 minutes of rows, and
 
 ## F9. Graph API
 
-**Status:** not started, waits on F5, F8 and the FastAPI decision. No FastAPI app exists yet. **File:** `company_graph/api.py`
+**Status:** done, verified live; mounted in `backend/main.py`. **File:** `company_graph/api.py`
+
+**As built:** status is `running` while links are being built, and again while highlights are being built (the page keeps polling), then `done`. A failed link run reports `error` with whatever links exist and retries after 5 minutes; a failed highlight run never turns a good graph into an error. Highlight runs happen at most once per `GRAPH_NEWS_TTL_HOURS` per company. Unknown tickers return 404; a missing `DATABASE_URL` returns 503. One process only: the run registries are in memory.
 
 **Build:**
 - `router = APIRouter()` with `GET /graph/{ticker}` and `GET /companies/search`.
 - `GET /graph/{ticker}`: return stored links at once. When links are missing or stale, start `build_links` as an in-process `asyncio` task and return `status: "running"`. When links are ready, run `build_highlights` and return `status: "done"`.
 - Return `schemas.GraphResponse`, so the shape always matches the page.
 - With `GRAPH_FAKE=1`, serve `schemas.load_fixture(ticker)` (an empty `done` graph for unknown tickers) and call nothing else.
-- Allow the frontend's origin (CORS): the page runs on port 5173 and the API on 8000.
-- Do not create the app's main file unless the team agreed that you own it. `fastapi` and `uvicorn` are added to `pyproject.toml` in the separate dependency pull request.
+- Mount it with one `app.include_router(...)` line in `backend/main.py` (ShabirZ's file). CORS for the frontend (`http://localhost:5173`) is already set there. `fastapi` is already a dependency.
 
 **Done when:** tests using FastAPI's test client, with the router mounted on a throwaway app, show that a first request returns `running`, a later one returns `done` with links, and fake mode works with no database and no network.
 
 ## F10. Graph page
 
-**Status:** done (works in fake mode). New files inside Michelle's frontend, plus three small edits to her files.
+**Status:** done; works against the real API and in fake mode. New files inside Michelle's frontend, plus three small edits to her files.
 
 **New files:** `frontend/src/pages/CompanyGraphPage.tsx`, `frontend/src/features/company-graph/` (components and fixtures), `frontend/src/types/graph.ts`.
 
@@ -339,7 +367,7 @@ Do not compare odds yourself. `market_prices` keeps only 30 minutes of rows, and
 
 ## F11. Demo tools
 
-**Status:** not started, waits on F9. **File:** `company_graph/__main__.py`
+**Status:** not started, unblocked. **File:** `company_graph/__main__.py`
 
 **Build:**
 - `uv run python -m company_graph build TICKER`: one `build_links` run, printed.

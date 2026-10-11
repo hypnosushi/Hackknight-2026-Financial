@@ -1,13 +1,28 @@
 import { Link, Outlet } from "react-router-dom";
+import { ThemeSwitcher } from "../features/theme/ThemeSwitcher";
+import { ProfileButton } from "../features/theme/ProfileButton";
 
 export default function AppLayout() {
   return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="border-b border-slate-200 bg-white px-6 py-4">
-        <span className="font-semibold text-slate-900">Financial Signals</span>
-        <Link to="/company-graph" className="ml-4 text-sm text-slate-600 hover:text-slate-900">Company graph</Link>
+    <div className="min-h-[100dvh]" style={{ background: "var(--bg)" }}>
+      <header
+        className="flex items-center justify-between border-b px-6 py-4"
+        style={{ borderColor: "var(--border)", background: "var(--surface)" }}
+      >
+        <div className="flex items-center gap-4">
+          <Link to="/" className="font-semibold" style={{ color: "var(--text-primary)" }}>
+            Financial Signals
+          </Link>
+          <Link to="/company-graph" className="text-sm" style={{ color: "var(--text-secondary)" }}>
+            Company graph
+          </Link>
+        </div>
+        <div className="flex items-center gap-4">
+          <ThemeSwitcher />
+          <ProfileButton />
+        </div>
       </header>
-      <main>
+      <main className="h-[calc(100dvh-65px)] overflow-hidden">
         <Outlet />
       </main>
     </div>

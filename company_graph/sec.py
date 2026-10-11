@@ -42,10 +42,12 @@ SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik:010d}.json"
 ARCHIVES_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{accession_nodash}/{document}"
 EFTS_URL = "https://efts.sec.gov/LATEST/search-index"
 EFTS_PAGE_SIZE = 100  # fixed by the endpoint; "from" pages through results
+BROWSE_URL = "https://www.sec.gov/cgi-bin/browse-edgar"  # company lists by industry (SIC) code
+BROWSE_PAGE_SIZE = 100
 
 DEFAULT_CACHE_DIR = Path(".cache/company_graph")
 DEFAULT_CACHE_TTL_S = 24 * 3600  # submissions and search results change; archived filings never do
-RETRY_STATUSES = (429, 503)
+RETRY_STATUSES = (429, 500, 502, 503, 504)  # rate limits and SEC's passing server errors
 
 
 class SecConfigError(RuntimeError):
@@ -211,6 +213,25 @@ class SecClient:
             filings=filings,
         )
 
+    async def ciks_by_sic(self, sic_code: str, max_pages: int = 5) -> tuple[str, list[int]]:
+        """CIKs SEC files under one industry (SIC) code, from EDGAR's company browse feed.
+
+        Returns (url of the first page, CIKs in SEC's order). The feed garbles company names, so
+        callers map CIKs to companies themselves. Confirmed live 2026-10-10: Atom XML with one
+        <cik> per <company-info>, 100 per page, paged with `start`.
+        """
+        base = {"action": "getcompany", "SIC": str(sic_code), "owner": "include",
+                "count": str(BROWSE_PAGE_SIZE), "output": "atom"}
+        first_url = f"{BROWSE_URL}?{urlencode(sorted(base.items()))}"
+        ciks: list[int] = []
+        for page in range(max_pages):
+            params = dict(base, **({"start": str(page * BROWSE_PAGE_SIZE)} if page else {}))
+            found = [int(c) for c in _CIK_TAG.findall((await self._get(BROWSE_URL, params)).decode("latin-1"))]
+            ciks.extend(c for c in found if c not in ciks)
+            if len(found) < BROWSE_PAGE_SIZE:
+                break
+        return first_url, ciks
+
     async def get_json(self, url: str) -> Any:
         """Any SEC JSON file (e.g. company_tickers.json), with the same User-Agent, limiter, retries and cache."""
         return json.loads(await self._get(url))
@@ -351,6 +372,9 @@ def html_to_text(html: str) -> str:
 
 
 _DISPLAY_NAME = re.compile(r"^(?P<name>.*?)\s*(?:\((?P<tickers>[^()]*)\))?\s*\(CIK (?P<cik>\d+)\)\s*$")
+
+
+_CIK_TAG = re.compile(r"<cik>\s*(\d+)\s*</cik>")
 
 
 def _parse_search_hit(raw: dict) -> SearchHit | None:

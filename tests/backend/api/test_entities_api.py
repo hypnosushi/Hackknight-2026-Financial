@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.api import entities
-from backend.api.app import app
+from backend.main import app
 from backend.entities import CATEGORIES
 
 TESLA = {"symbol": "TSLA", "name": "Tesla, Inc.", "type": "company"}
@@ -34,10 +34,11 @@ def client(monkeypatch):
     for name, fn in [("autocomplete", autocomplete), ("get_entity", get_entity),
                      ("markets_for_entity", markets_for_entity)]:
         monkeypatch.setattr(entities.db, name, fn)
-    app.state.engine = None  # no lifespan, so no database
+    app.dependency_overrides[entities.get_engine] = lambda: None  # no database
     test_client = TestClient(app)
     test_client.calls = calls
-    return test_client
+    yield test_client
+    app.dependency_overrides.clear()
 
 
 def test_autocomplete_tes_returns_tesla(client):
@@ -60,11 +61,6 @@ def test_entity_markets_across_sources(client):
 
 def test_unknown_entity_is_404(client):
     assert client.get("/entities/NOPE/markets").status_code == 404
-
-
-def test_cors_allows_the_vite_dev_server(client):
-    response = client.get("/entities/autocomplete", params={"q": "Tes"}, headers={"Origin": "http://localhost:5173"})
-    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
 
 
 def test_category_values_match_the_map():

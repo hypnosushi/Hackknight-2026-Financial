@@ -8,21 +8,26 @@ One run, for the searched company S:
   1. Skip if `graph_link_runs` says the last run is `done` and newer than GRAPH_LINK_TTL_DAYS
      (no network call, not even the company directory when the ticker is given exactly).
      Otherwise mark it `running` and commit, so a poller sees it.
-  2. One `list_filings` call (10-K and 8-K) gives S's SIC code, saved to
-     `graph_company_profiles`, its latest 10-K and its 8-Ks from the last 90 days.
-  3. Own 10-K: `trim_by_phrases`, then the companies named in each chunk (US-listed names
+  2. One `list_filings` call (annual reports and 8-Ks) gives S's SIC code, saved to
+     `graph_company_profiles`, its latest annual report and its 8-Ks from the last 90 days.
+     Annual reports are ANNUAL_FORMS: 10-K, plus 20-F and 40-F from foreign companies listed
+     in the US (TSMC, for example), which never file a 10-K.
+  3. Own annual report: `trim_by_phrases`, then the companies named in each chunk (US-listed names
      found through the company directory, as F7 does for markets) are the subjects passed to
      `extract`, with S as the filer.
-  4. Reverse lookup: `full_text_search` for S's short name in quotes, 10-Ks of the last 18
-     months, top 10 filings by other filers. Each is trimmed with `trim_by_name` and read with
-     the hit's company as the filer and S as the subject.
+  4. Reverse lookup: `full_text_search` for S's short name in quotes, annual reports of the last 18
+     months; one filing per other filer, the 10 largest filers first (size = position in SEC's
+     ticker list, which is ordered by company size). Each is trimmed with `trim_by_name` and
+     read with the hit's company as the filer and S as the subject.
   5. 8-Ks: read, and kept only when they announce a material agreement or an acquisition
      (Item 1.01 or 2.01); same trim and extract as the own 10-K.
   6. A filing already in `graph_processed_filings` is skipped; each filing read is recorded.
   7. At most GRAPH_MAX_LINKED linked companies per run; suppliers and customers displace
      partners, competitors and sector peers that this run inserted.
-  8. No link from filings at all: `sector_peer` links to companies already in
-     `graph_company_profiles` with S's SIC code (often none; the page handles that).
+  8. Industry peers: SEC's company list for S's SIC code, largest first, as `sector_peer`
+     links: INDUSTRY_PEERS of them next to filing links, or up to GRAPH_MAX_LINKED when S has
+     no filing link. If that list fails and S has no filing link, companies already in
+     `graph_company_profiles` with S's SIC code are used instead.
   9. Mark the run `done`, or `error` with the message.
 
 Direction (company_graph.md): a filing link is stored with the FILER as `entity_symbol`, and
@@ -32,8 +37,9 @@ X). Sector links are (S -> peer, sector_peer). `read_links` reads both direction
 second with `reverse_type`, so every link comes back as "X is S's <type>". The same rows serve
 X's graph too, and a link found from both sides is one row, not two.
 
-Every evidence URL is a document fetched by this run's one SecClient (`fetched_urls`); the
-sector fallback uses S's submissions JSON, fetched by `list_filings` in the same run.
+Every evidence URL is a document fetched by this run's one SecClient (`fetched_urls`): industry
+peers cite SEC's industry company list, and the profile fallback cites S's submissions JSON,
+both fetched in the same run.
 
 Timing: documents are read in parallel (SEC requests share the client's limiter; model calls
 run in threads, at most MAX_PARALLEL_MODEL_CALLS at a time). Only the main coroutine touches
@@ -74,9 +80,12 @@ from company_graph.trim import DEFAULT_PHRASES, Chunk, trim_by_name, trim_by_phr
 log = logging.getLogger(__name__)
 
 TIME_BUDGET_S = 60.0
+ANNUAL_FORMS = ("10-K", "20-F", "40-F")  # US annual report; foreign and Canadian issuers' equivalents
 REVERSE_LOOKBACK_DAYS = 548        # 18 months
 EIGHT_K_LOOKBACK_DAYS = 90
 REVERSE_TOP_HITS = 10
+INDUSTRY_PEERS = 3                 # largest same-industry companies added next to filing links
+INDUSTRY_PEERS_GRACE_S = 10.0      # time allowed for the industry list even after the run's budget
 MAX_EIGHT_KS = 10                  # most recent 8-Ks read per run
 MAX_SUBJECTS_PER_FILING = 12       # companies asked about per own filing (most mentioned first)
 MAX_CHUNKS_PER_PAIR = 2            # passages sent to the model per (filer, subject) pair
@@ -212,18 +221,24 @@ def filer_company(hit: SearchHit, directory: CompanyDirectory) -> Company:
     return Company(symbol=name, name=name, cik=hit.cik)
 
 
-def reverse_hits(hits: list[SearchHit], company: Company, limit: int = REVERSE_TOP_HITS) -> list[SearchHit]:
-    """The top `limit` filings (one document each) by filers other than `company`, in search order."""
-    out: list[SearchHit] = []
-    seen: set[str] = set()
+def reverse_hits(hits: list[SearchHit], company: Company, limit: int = REVERSE_TOP_HITS,
+                 size_rank: Callable[[int], int] | None = None) -> list[SearchHit]:
+    """Filings by other companies to read, one per filer, at most `limit`. Pure.
+
+    SEC ranks hits by how much the text matches, which favours small companies whose business
+    depends on `company`. With `size_rank` (CIK -> 0 for the largest), the largest filers come
+    first and search order breaks ties.
+    """
+    first_per_filer: list[SearchHit] = []
+    seen: set[int] = set()
     for hit in hits:
-        if hit.cik == company.cik or hit.accession_number in seen:
+        if hit.cik == company.cik or hit.cik in seen:
             continue
-        seen.add(hit.accession_number)
-        out.append(hit)
-        if len(out) >= limit:
-            break
-    return out
+        seen.add(hit.cik)
+        first_per_filer.append(hit)
+    if size_rank is not None:
+        first_per_filer.sort(key=lambda h: size_rank(h.cik))  # stable: search order breaks ties
+    return first_per_filer[:limit]
 
 
 # --- database helpers ----------------------------------------------------------------
@@ -438,6 +453,7 @@ class _LinkRun:
         self.fetched_urls: set[str] = set()
         self.queued: set[str] = set()  # processed-filing keys already scheduled in this run
         self.linked: dict[str, list[tuple[EntityRelationship, bool]]] = {}  # other symbol -> (row, inserted)
+        self.filing_links_saved = 0  # links from filings this run (industry peers not counted)
         self.sic_code: str | None = None
         self.sic_description: str | None = None
         self.model_slots = asyncio.Semaphore(MAX_PARALLEL_MODEL_CALLS)
@@ -453,7 +469,7 @@ class _LinkRun:
         try:
             try:
                 filings = await asyncio.wait_for(
-                    self.sec.list_filings(self.company.cik, forms=["10-K", "8-K"]), max(remaining(), 0))
+                    self.sec.list_filings(self.company.cik, forms=[*ANNUAL_FORMS, "8-K"]), max(remaining(), 0))
             except TimeoutError:
                 self.result.timed_out = True
                 filings = None
@@ -486,19 +502,20 @@ class _LinkRun:
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
 
-        if not self.result.linked:
-            await self._sector_fallback()
-        if self.result.errors and not self.result.linked:
-            # Nothing saved and something failed (SEC, search or the model): report it, so the
-            # empty result is not reused for GRAPH_LINK_TTL_DAYS.
-            self.result.error = f"no links saved; {len(self.result.errors)} failure(s), first: {self.result.errors[0]}"
+        await self._industry_peers(remaining)
+        if self.result.errors and not self.filing_links_saved:
+            # No filing link saved and something failed (SEC, search or the model): report it, so
+            # the result is not reused for GRAPH_LINK_TTL_DAYS. Industry peers saved this run are
+            # still shown; the error only makes a later search retry.
+            self.result.error = (f"no filing links saved; {len(self.result.errors)} failure(s), "
+                                 f"first: {self.result.errors[0]}")
 
 
     async def _own_jobs(self, filings) -> list[_Job]:
         jobs: list[_Job] = []
-        ten_ks = [f for f in filings if f.form.upper() == "10-K" and f.url]
-        if ten_ks:
-            f = ten_ks[0]
+        annual = [f for f in filings if f.form.upper() in ANNUAL_FORMS and f.url]
+        if annual:
+            f = annual[0]  # newest first
             jobs.append(_Job(f.accession_number, f.accession_number, self.company.cik, f.form, f.url,
                              "own10k", self.company))
         since = self.today - timedelta(days=EIGHT_K_LOOKBACK_DAYS)
@@ -521,7 +538,7 @@ class _LinkRun:
     async def _search(self) -> list[SearchHit]:
         query = f'"{short_name(self.company.name) or self.company.name}"'
         since = self.today - timedelta(days=REVERSE_LOOKBACK_DAYS)
-        return await self.sec.full_text_search(query, forms=["10-K"], since=since)
+        return await self.sec.full_text_search(query, forms=list(ANNUAL_FORMS), since=since)
 
     async def _on_search(self, task: asyncio.Task) -> set[asyncio.Task]:
         try:
@@ -530,7 +547,7 @@ class _LinkRun:
             self.result.errors.append(f"full-text search: {type(exc).__name__}: {exc}")
             return set()
         new: set[asyncio.Task] = set()
-        for hit in reverse_hits(hits, self.company):
+        for hit in reverse_hits(hits, self.company, size_rank=self.directory.size_rank):
             filer = filer_company(hit, self.directory)
             if hit.sic_code and filer.symbol != filer.name:  # a profile needs a ticker
                 await _save_profile(self.session, filer.symbol, hit.cik, hit.sic_code)
@@ -605,6 +622,7 @@ class _LinkRun:
         inserted = sa_inspect(row).pending
         await self.session.flush()
         self.linked.setdefault(other, []).append((row, inserted))
+        self.filing_links_saved += 1
         if other not in self.result.linked:
             self.result.linked.append(other)
 
@@ -625,6 +643,54 @@ class _LinkRun:
         await self.session.flush()
         self.result.linked.remove(sym)
         return True
+
+    async def _industry_peers(self, remaining: Callable[[], float]) -> None:
+        """The largest companies SEC files under S's industry code, as `sector_peer` links.
+
+        INDUSTRY_PEERS of them next to filing links, or up to GRAPH_MAX_LINKED when S has no
+        filing link. If SEC's industry list fails, an S without filing links falls back to
+        companies already profiled with the same code.
+        """
+        if not self.sic_code:
+            return
+        s = self.company.symbol
+        has_links = bool(self.result.linked) or (await self.session.execute(select(EntityRelationship.id).where(
+            or_(EntityRelationship.entity_symbol == s, EntityRelationship.related_entity_symbol == s),
+            EntityRelationship.source == "filing").limit(1))).first() is not None
+        want = INDUSTRY_PEERS if has_links else self.cfg.graph_max_linked
+        try:
+            url, ciks = await asyncio.wait_for(self.sec.ciks_by_sic(self.sic_code),
+                                               max(remaining(), INDUSTRY_PEERS_GRACE_S))
+        except Exception as exc:  # noqa: BLE001 - peers are optional
+            log.info("link run %s: industry list for SIC %s failed: %s", s, self.sic_code, exc)
+            if not has_links:
+                await self._sector_fallback()
+            return
+        self.fetched_urls.add(url)
+        peers = sorted({c.cik: c for c in (self.directory.by_cik(k) for k in ciks)
+                        if c is not None and not _same_company(c, self.company)}.values(),
+                       key=lambda c: self.directory.size_rank(c.cik))
+        industry = f"{self.sic_code} ({self.sic_description})" if self.sic_description else self.sic_code
+        added = 0
+        for peer in peers:
+            if added >= want or len(self.linked) >= self.cfg.graph_max_linked:
+                break
+            if peer.symbol in self.linked:
+                continue
+            summary = f"SEC lists {self.company.name} and {peer.name} under the same industry code, {industry}."
+            try:
+                row = await save_relationship(self.session, self.company, peer, "sector_peer", summary, url,
+                                              self.fetched_urls, source="sector")
+            except RelationshipRejected:
+                continue
+            inserted = sa_inspect(row).pending
+            await self.session.flush()
+            self.linked.setdefault(peer.symbol, []).append((row, inserted))
+            self.result.linked.append(peer.symbol)
+            added += 1
+        if added and not has_links:
+            self.result.sector_fallback = True
+        await self.session.commit()
 
     async def _sector_fallback(self) -> None:
         s = self.company.symbol

@@ -45,3 +45,20 @@ def test_known_false_positive_on_generic_word_is_accepted_behavior():
     # a bug — a later relevance pass is expected to correct this.
     matcher = _matcher()
     assert matcher.match("Analysts target a new price for the sector", None) == ["TGT"]
+
+
+def test_short_ticker_matches_only_in_capitals():
+    matcher = EntityMatcher(
+        [
+            EntityAlias(symbol="A", aliases=["Agilent"]),
+            EntityAlias(symbol="ON", aliases=["onsemi"]),
+        ]
+    )
+    assert matcher.match("Chipmakers rally on a strong day", None) == []
+    assert matcher.match("Analysts upgrade ON after earnings", None) == ["ON"]
+    assert matcher.match("agilent beats estimates", None) == ["A"]
+
+
+def test_symbol_that_is_a_name_still_matches_in_any_case():
+    matcher = EntityMatcher([EntityAlias(symbol="Panasonic Holdings", aliases=[])])
+    assert matcher.match("panasonic holdings expands battery plant", None) == ["Panasonic Holdings"]
