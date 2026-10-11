@@ -1,6 +1,6 @@
 # Alert → Company Impact
 
-**Status:** Draft
+**Status:** Built (backend, tiers 1-3): `backend/alert_impact/`, `backend/api/alerts.py`
 **Owner:** Unassigned
 
 ## Problem / Why
@@ -93,6 +93,19 @@ such as a memory-chip market reaching a company whose supplier edge is tagged "m
 F14 has run and the cache is filled, tier 3 is empty and an oil market only reaches the
 companies Jev tagged directly in tier 1.
 
+### Tier 3 as built: Jev over every company
+
+Instead of F14 keywords, tier 3 asks Jev directly (`backend/alert_impact/jev_match.py`): the
+market's title, outcome, event and rules are the state, and every company in `entities` (the 50
+map companies plus those the company graph added, 121 today) gets one yes/no question, "would
+this market's outcome matter to an investor in X: is it about X, or would it directly move its
+sales, costs, prices or regulation?", 50 per call, calls in parallel (~1-2 s). Companies at 0.5
+or more that tiers 1-2 didn't already find are tier 3, ranked by probability, stored with
+`relevance` and the market's own tags as `matched`. This reaches companies from markets about
+things (gas prices -> refiners) with no keyword table. If Jev fails, the alert keeps its tiers
+1-2 and the run records why tier 3 was skipped. `ALERT_IMPACT_JEV=0` turns it off. The F14 /
+`company_entity_tags` route below remains an option for cheaper, explainable matches.
+
 ### Worker
 
 `python -m backend.alert_impact`, next to the enrichment worker:
@@ -124,8 +137,10 @@ New table **`alert_impacts`** (one row per alert and company):
 Plus a status row per alert for retries, either in `alert_impacts` itself (a row with a null
 company) or a small `alert_impact_runs (alert_id, status, error, attempts)`.
 
-Also writes `graph_events` (one per company and market URL, exactly like F7), so F8 and the
-workspace graph need no change.
+Also writes `graph_events` for tier-1 companies (one per company and market URL, exactly like
+F7), so F8 and the workspace graph need no change. Tier-2 companies get no `graph_events` row:
+F8 already spreads a company's events to the companies it links to, so writing them too would
+double that.
 
 API (draft, in `backend/api/alerts.py`):
 
@@ -177,8 +192,15 @@ API (draft, in `backend/api/alerts.py`):
   untagged market, within 5 s, and the event is then tagged for search too.
 - A Crude Oil alert lists companies Jev tagged directly (tier 1) above their graph-linked
   companies (tier 2), each with `matched` set.
-- Every affected company also has a `graph_events` row with the alert's id, and shows as
-  highlighted on the workspace graph without frontend changes.
+- Every tier-1 company also has a `graph_events` row with the alert's id, so it feeds the
+  workspace graph's highlights without frontend changes.
+
+Verified live (2026-10-10, shared DB): a test alert on "NVIDIA B200 · Average hourly price in
+July 2027", inserted with the detector's own `insert_alert` (so `pg_notify` fired), was
+processed in 0.6 s: NVDA tier 1 with a `graph_events` row; COHR, CRWV, FN, GOOGL, INTC, IREN,
+MSFT, MU, NBIS tier 2; served by `/alerts/recent`, `/entities/NVDA/alerts` and
+`/entities/MU/alerts`. The test rows were deleted afterwards. Tier 3 (F14 keywords via
+`company_entity_tags`) is not built yet.
 - An alert written while the worker was down is processed on restart (within the lookback).
 - A Jev or database failure for one alert is recorded and retried, and the next alert is still
   processed.
