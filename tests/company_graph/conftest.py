@@ -11,7 +11,7 @@ _MODEL_SETTINGS = ("GRAPH_LLM_PROVIDER", "GRAPH_LLM_MODEL", "GRAPH_ANTHROPIC_MOD
 # Keys for outside services: cleared so no test can reach NewsAPI, Alpaca, OpenRouter or Anthropic
 # or X with the developer's real credentials.
 _SERVICE_KEYS = ("NEWSAPI_KEY", "ALPACA_API_KEY_ID", "ALPACA_API_SECRET_KEY", "OPENROUTER", "ANTHROPIC_API_KEY",
-                 "X_BEARER_TOKEN")
+                 "X_BEARER_TOKEN", "TYPESAFE_API_KEY")
 
 
 @pytest.fixture(autouse=True)

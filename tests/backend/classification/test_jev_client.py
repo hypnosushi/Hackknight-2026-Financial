@@ -17,6 +17,10 @@ def _jev_response(answers: dict) -> httpx.Response:
 
 @pytest.fixture(autouse=True)
 def api_key(monkeypatch):
+    # TYPESAFE_API_KEY takes priority when set, so clear it explicitly — otherwise a real
+    # value leaking in via backend.main's load_dotenv() (any test importing it in this same
+    # pytest session) would silently win over this fixture's OPENROUTER test key.
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
     monkeypatch.setenv("OPENROUTER", "test-key")
 
 
@@ -63,8 +67,44 @@ def test_call_jev_parses_choice_answer():
 
 def test_call_jev_raises_on_missing_api_key(monkeypatch):
     monkeypatch.delenv("OPENROUTER", raising=False)
-    with pytest.raises(JevError, match="OPENROUTER"):
+    with pytest.raises(JevError, match="TYPESAFE_API_KEY"):
         call_jev("text", {"main": NoulQuestion(instructions="q")})
+
+
+def test_call_jev_prefers_typesafe_when_its_key_is_set(monkeypatch):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "ts-test-key")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "https://api.typesafe.ai/v1/systemone"
+        assert request.headers["Authorization"] == "Bearer ts-test-key"
+        body = json.loads(request.content)
+        assert body["model"] == "jev-latest"
+        return _jev_response({"main": {"type": "noul", "noul": 0.42}})
+
+    result = call_jev(
+        "some text",
+        {"main": NoulQuestion(instructions="is this bullish?")},
+        http_client=_client_with(handler),
+    )
+
+    assert result == {"main": NoulAnswer(noul=0.42)}
+
+
+def test_call_jev_falls_back_to_openrouter_without_typesafe_key():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "https://openrouter.ai/api/alpha/decisions"
+        assert request.headers["Authorization"] == "Bearer test-key"
+        body = json.loads(request.content)
+        assert body["model"] == "typesafe/jev-1.13"
+        return _jev_response({"main": {"type": "noul", "noul": 0.1}})
+
+    result = call_jev(
+        "some text",
+        {"main": NoulQuestion(instructions="is this bullish?")},
+        http_client=_client_with(handler),
+    )
+
+    assert result == {"main": NoulAnswer(noul=0.1)}
 
 
 def test_call_jev_raises_on_unknown_answer_type():

@@ -61,6 +61,16 @@ def _default_range(start: datetime | None, end: datetime | None) -> tuple[dateti
     return start, end
 
 
+def _clamp_search_start(start: datetime, end: datetime) -> datetime:
+    """Floor a keyword search's start at X's own ~7-day recent-search window.
+    X hard-rejects (400 "start_time must be on or after ...") any start_time
+    older than that rather than silently ignoring it, so a caller picking an
+    older time range (e.g. an old chart spike) would otherwise 400 the whole
+    request instead of just searching what X actually has.
+    """
+    return max(start, end - SEARCH_LOOKBACK)
+
+
 @router.get("/account/{handle}", response_model=list[ContentItem])
 def get_account_tweets(
     handle: str,
@@ -83,6 +93,7 @@ def search_tweets(
     gateway: TwitterApiGateway = Depends(get_twitter_gateway),
 ) -> list[ContentItem]:
     start, end = _default_range(start, end)
+    start = _clamp_search_start(start, end)
     try:
         return lookup_keyword(query, start, end, gateway, entities=[])
     except TwitterApiError as exc:
@@ -172,7 +183,8 @@ def classify_tweets(
         if handle:
             items = lookup_account(handle, start or end - ACCOUNT_LOOKBACK, end, gateway, entities=[])
         else:
-            items = lookup_keyword(query, start or end - SEARCH_LOOKBACK, end, gateway, entities=[])
+            query_start = _clamp_search_start(start or end - SEARCH_LOOKBACK, end)
+            items = lookup_keyword(query, query_start, end, gateway, entities=[])
     except TwitterApiError as exc:
         raise HTTPException(status_code=502 if exc.retryable else 400, detail=exc.message) from exc
 
