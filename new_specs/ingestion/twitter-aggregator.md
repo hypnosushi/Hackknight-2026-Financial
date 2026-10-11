@@ -1,7 +1,7 @@
 # Ingestion: Twitter Aggregator
 
 **Status:** Draft
-**Owner:** Unassigned
+**Owner:** Shabir
 
 See [ingestion overview](./README.md) for the shared content-item schema and
 cross-source dependencies.
@@ -36,21 +36,34 @@ shaped.
 
 ## Functional Requirements
 
-1. Poll the Twitter/X API on a configurable interval, respecting a
+1. Before each poll, read the active accounts/hashtags/cashtags/keywords
+   from the shared `twitter_watchlist` table (see
+   [db design](../../mock_db_design/db-design.md)) to build the query —
+   this list is user-configurable, not hardcoded.
+2. Poll the Twitter/X API on a configurable interval, respecting a
    configurable rate-limit budget.
-2. Support filtering by: specific accounts, excluded accounts, hashtags,
+3. Support filtering by: specific accounts, excluded accounts, hashtags,
    cashtags, keyword and phrase queries, boolean operators and exclusions,
    language, contains-links, time window, geography.
-3. Support quality/relevance filters: minimum engagement, account
+4. Support quality/relevance filters: minimum engagement, account
    verification or account age.
-4. De-duplicate retweets and quote-tweets.
-5. Emit each matched post as a normalized content item (see [ingestion
+5. De-duplicate retweets and quote-tweets.
+6. Emit each matched post as a normalized content item (see [ingestion
    overview](./README.md#shared-normalized-content-item-schema)).
 
 ## Design / Approach
 
-Left light — exact polling vs. streaming approach depends on which X API
-tier is available for the hackathon.
+This source exposes an async poll function that the shared
+[scheduler](./scheduler.md) triggers on this source's configured interval —
+running in-process alongside FastAPI, not as a separate worker (see
+[tech-stack.md](../../architecture/tech-stack.md)). The scheduler only
+triggers the poll; everything inside it (querying `twitter_watchlist`,
+calling the X API, filtering, de-duplicating, emitting content items) stays
+owned by this source.
+
+Exact polling vs. streaming approach inside that poll function still
+depends on which X API tier is available for the hackathon — left light
+until that's confirmed.
 
 ## Interfaces / Data Model
 
@@ -60,16 +73,19 @@ with `"source": "twitter"`.
 ## Dependencies
 
 - Twitter/X API (tier/access level TBD — affects streaming vs. polling).
+- `twitter_watchlist` (db design) — source of the active accounts/hashtags/
+  cashtags/keywords to poll for.
 - [[jev-classifier]] — downstream consumer of emitted items.
 
 ## Open Questions
 
 - Which X API tier/access do we have for the hackathon, and does it
   support streaming or only polling/search?
-- Final list of tracked accounts/hashtags/cashtags — curated manually, or
-  user-configurable?
 - Defaults for the quality filters (minimum engagement, account age) — none
   picked yet.
+- Who/what adds entries to `twitter_watchlist` — a UI, a config file, an
+  API? Resolved so far only that it's a shared list, not per-user and not
+  hardcoded.
 
 ## Acceptance Criteria
 

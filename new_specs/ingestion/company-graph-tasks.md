@@ -28,6 +28,7 @@ This feature replaces the deleted `new_specs/company-network.md` and answers its
 | F11 Demo tools | Not started, unblocked |
 | F12 X posts as events | Done, verified live (`company_graph/social_events.py`) |
 | F13 News about a linked pair | Done, verified live (`company_graph/pair_news.py`, `GET /graph/{ticker}/news/{other}`, the page's company panel) |
+| F14 Relationship tags (Haiku) | Not started, unblocked |
 
 ## Live results (2026-10-10)
 
@@ -97,6 +98,7 @@ Owners are taken from git history.
 | Which LLM provider? Who builds Jev? | F4, F6, F8 | Resolved: OpenRouter through `backend/llm`; Jev is `backend/classification`. |
 | Which stock price source? | F8 | Resolved: Alpaca, `backend/ingestion/alpaca`. |
 | Who owns `company-network.md`? | Nothing now | Resolved: that spec was deleted; this file replaces it. |
+| May `entity_relationships` gain `tags`? | F14 | Resolved: added (`TEXT[]`), `db-design.md` updated, column added on the shared Neon database via a manual `ALTER TABLE` (no migrations, so `create_all` won't add it to a table that already exists). |
 
 ## Rules for the agent
 
@@ -122,7 +124,7 @@ All of these exist. The models are in `backend/models/`, and the allowed values 
 | Table | Columns |
 | --- | --- |
 | `entities` | `symbol` (pk), `name`, `type` (`company`, `person`, `industry`), `created_at` |
-| `entity_relationships` | `id` (UUID), `entity_symbol` and `related_entity_symbol` (both foreign keys to `entities`), `relationship_type`, `weight`, `confidence`, `source`, `last_confirmed_at`, `summary`, `evidence_url`; unique on (`entity_symbol`, `related_entity_symbol`, `relationship_type`) |
+| `entity_relationships` | `id` (UUID), `entity_symbol` and `related_entity_symbol` (both foreign keys to `entities`), `relationship_type`, `weight`, `confidence`, `source`, `last_confirmed_at`, `summary`, `evidence_url`, `tags` (`TEXT[]`, nullable, F14); unique on (`entity_symbol`, `related_entity_symbol`, `relationship_type`) |
 | `market_entities` | `source`, `market_id`, `entity_symbol` (composite pk; no foreign key to `markets`) |
 
 - `relationship_type` is one of `supplier`, `customer`, `partner`, `competitor`, `sector_peer`. It describes the related company's role: `supplier` means the related company supplies the entity.
@@ -185,8 +187,9 @@ The result is called a highlight, not a signal, because `alert_detector/signals.
 
 | Step | Feature | Waits on |
 | --- | --- | --- |
-| Done | F0 to F10 | |
+| Done | F0 to F10, F12 | |
 | 1 | F11 Demo tools | Nothing |
+| 1 | F14 Relationship tags (Haiku) | Nothing (reads `entity_relationships` rows F4/F5 already saved) |
 
 Suggested next, outside the original plan: colour the searched company when a highlight targets it (frontend), fit the graph to its box on load (frontend), and deploy (see the team's hosting plan).
 
@@ -376,3 +379,25 @@ Do not compare odds yourself. `market_prices` keeps only 30 minutes of rows, and
 - `uv run python -m company_graph replay TICKER EVENT_FILE`: insert a recorded event into `graph_events` (never into `alerts`) and run `build_highlights`, so a node lights up on the next poll.
 
 **Done when:** after prewarming, a search for those tickers returns links in under one second, and a replay highlights a node on an open page within 5 seconds.
+
+## F14. Relationship tags (Haiku)
+
+**Status:** not started, unblocked. **Touches the team's design:** yes — `entity_relationships` gains `tags` (`TEXT[]`, nullable). Already resolved and applied: column added on the shared Neon database, `db-design.md` updated, model updated (`backend/models/entity_relationship.py`). **File:** `company_graph/tags.py`
+
+**Why:** F4/F5 already write a factual `summary` for every edge (e.g. "NVIDIA states it buys memory from SK hynix, which would supply memory for the N1X-powered laptop launch"). This feature turns that sentence into a short list of keyword tags (`memory`, `semiconductors`) that a later, separate feature can compare against Kalshi market titles/categories to see whether a market (e.g. one about the Strait of Hormuz) is relevant to a company through an indirect dependency like oil. **That comparison step is not part of this feature** — this is tag generation only.
+
+**Build:**
+- A Pydantic response model, e.g. `RelationshipTags(tags: list[str])`.
+- `generate_tags(summary: str) -> list[str]`: one call through `company_graph/llm.py`'s existing `complete(system, user, response_model)` (reuse it as-is — it already supports Haiku directly via `GRAPH_LLM_PROVIDER=anthropic` + `GRAPH_ANTHROPIC_MODEL=claude-haiku-5-5`, no new LLM plumbing). The prompt asks for 1-5 short, lowercase keywords: commodities, sectors, geographic chokepoints, or company names that a prediction-market title might use — not a fixed taxonomy. Returns `[]` immediately without a model call when `summary` is empty/`None`.
+- `tag_relationship(session, relationship: EntityRelationship) -> None` (async): calls `generate_tags` through `asyncio.to_thread` (the model call is synchronous, matching F4/F8), sets `relationship.tags`, flushes. Commit is left to the caller, matching the "Saving" convention.
+- `tag_missing(session, limit=50) -> int`: selects `entity_relationships` rows where `tags IS NULL`, tags each one, returns the count tagged.
+- **Not an API endpoint and not wired into F5/`build_links`.** A one-shot script, run on demand (after a link run, or whenever there's new untagged data) — not a background/long-running process: `tag_all(database_url, batch_size=50) -> int` connects once, calls `tag_missing` repeatedly until a batch comes back smaller than `batch_size` (i.e. nothing left to tag), committing after each batch so a later failure doesn't lose earlier progress, then disposes the engine and returns the total tagged.
+- Entry point: `uv run python -m company_graph.tags`, run independently of the FastAPI app and of F11's `__main__.py` dev tools, same as an ingestion module's `__main__.py`. Runs once and exits; no interval, no signal handling, no loop.
+
+**Non-Goals:**
+- Comparing tags to Kalshi market titles/categories to find corresponding markets — a separate, later feature.
+- Fetching the article at `evidence_url` — `generate_tags` only reads the stored `summary` text; the URL is not scraped.
+- A fixed/controlled tag vocabulary — tags are free-form short strings from the model, not validated against a list.
+- An API endpoint or a background/polling process — this is a script, run by hand (or later wired into a scheduler/CI step) when there's new data to tag, not something that stays running.
+
+**Done when:** a fixture relationship with the NVIDIA/SK hynix summary above produces tags including something like `memory` or `semiconductors` (model call faked in tests with a canned reply), a relationship with no `summary` produces `[]` and makes no model call, `tag_missing()` only tags rows where `tags IS NULL` (rerunning it twice tags nothing the second time), and `python -m company_graph.tags` run against a database with untagged rows tags all of them in one invocation and exits.

@@ -148,25 +148,31 @@ def classify_tweets(
     entity: str,
     handle: str | None = Query(default=None),
     query: str | None = Query(default=None),
+    start: datetime | None = Query(default=None),
+    end: datetime | None = Query(default=None),
     tags: str | None = Query(default=None, description="comma-separated, optional"),
     threshold: float = Query(default=DEFAULT_UNRELATED_THRESHOLD),
     concurrency: int = Query(default=DEFAULT_CLASSIFY_CONCURRENCY),
     gateway: TwitterApiGateway = Depends(get_twitter_gateway),
 ) -> list[ClassifiedTweet]:
-    """Fetch as much of an account's/keyword's history as twitter-lookup
-    allows, classify every post against `entity` in one Jev call each,
-    and return only the ones that correlate (see
-    new_specs/twitter-jev-classification.md). Nothing persisted.
+    """Fetch an account's/keyword's history in [start, end] (defaulting to
+    as much as twitter-lookup allows, same as before), classify every post
+    against `entity` in one Jev call each, and return only the ones that
+    correlate (see new_specs/twitter-jev-classification.md). Nothing
+    persisted. Note: a keyword `query` search is capped by X's own
+    recent-search endpoint to roughly the last 7 days no matter what
+    `start` is given; an account `handle` lookup has no such limit (up to
+    X's ~3,200-tweet cap).
     """
     if bool(handle) == bool(query):
         raise HTTPException(status_code=400, detail="Provide exactly one of handle or query")
 
-    now = datetime.now(timezone.utc)
+    end = end or datetime.now(timezone.utc)
     try:
         if handle:
-            items = lookup_account(handle, now - ACCOUNT_LOOKBACK, now, gateway, entities=[])
+            items = lookup_account(handle, start or end - ACCOUNT_LOOKBACK, end, gateway, entities=[])
         else:
-            items = lookup_keyword(query, now - SEARCH_LOOKBACK, now, gateway, entities=[])
+            items = lookup_keyword(query, start or end - SEARCH_LOOKBACK, end, gateway, entities=[])
     except TwitterApiError as exc:
         raise HTTPException(status_code=502 if exc.retryable else 400, detail=exc.message) from exc
 

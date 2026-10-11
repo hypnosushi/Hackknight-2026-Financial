@@ -67,6 +67,11 @@ def require_env(key: str) -> str:
 
 
 def main() -> None:
+    # Tweet text can contain characters the Windows console's default
+    # encoding can't print (smart quotes, em-dashes, emoji); without this,
+    # one such tweet crashes the whole run after burning real Jev calls.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--handle", required=True, help="X account handle to fetch, e.g. realDonaldTrump")
     parser.add_argument("--entity", default="NVDA", help="entity to classify posts against (default NVDA)")
@@ -115,77 +120,81 @@ def main() -> None:
     dropped_records: list[dict] = []
     batch_start = time.perf_counter()
 
-    with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
-        futures = [pool.submit(classify_one, item) for item in items]
-        for i, future in enumerate(as_completed(futures)):
-            item, elapsed_ms, result = future.result()
-
-            if result is None:
-                print(f"[{i + 1:>3}] FAILED ({elapsed_ms:.0f}ms): {item.text[:70]!r}")
-                dropped_records.append({"tweet": item.model_dump(mode="json"), "elapsed_ms": elapsed_ms,
-                                         "error": "JevError"})
-                continue
-
-            latencies_ms.append(elapsed_ms)
-            label_counts[result.label] = label_counts.get(result.label, 0) + 1
-            unrelated_prob = (result.probabilities or {}).get("unrelated", 0.0)
-            kept = unrelated_prob < args.threshold
-            record = {"tweet": item.model_dump(mode="json"), "elapsed_ms": elapsed_ms,
-                       "result": result.model_dump(mode="json"), "kept": kept}
-            print(f"[{i + 1:>3}] {elapsed_ms:>6.0f}ms  {result.label:<10} "
-                  f"(unrelated={unrelated_prob:.2f}, {'KEPT' if kept else 'dropped'})  {item.text[:70]!r}")
-            (kept_records if kept else dropped_records).append(record)
-
-    total_s = time.perf_counter() - batch_start
-
-    print("\n--- summary ---")
-    print(f"fetched:    {len(items)}")
-    print(f"classified: {len(latencies_ms)}")
-    print(f"failed:     {len(items) - len(latencies_ms) - 0}")
-    print(f"kept:       {len(kept_records)}")
-    print(f"dropped:    {len(dropped_records)}")
-    print(f"total wall time: {total_s:.1f}s")
-    if latencies_ms:
-        sorted_lat = sorted(latencies_ms)
-        p95_idx = min(len(sorted_lat) - 1, int(len(sorted_lat) * 0.95))
-        print(f"latency min/median/p95/max (ms): "
-              f"{sorted_lat[0]:.0f} / {statistics.median(sorted_lat):.0f} / "
-              f"{sorted_lat[p95_idx]:.0f} / {sorted_lat[-1]:.0f}")
-    print(f"label distribution: {label_counts}")
-    print(
-        "\nAccuracy isn't computed above — there's no ground truth. Scroll the "
-        "per-tweet lines and eyeball whether 'unrelated' is doing its job, not "
-        "swallowing real signal (see new_specs/twitter-jev-classification.md "
-        "Design/Approach)."
-    )
-
-    out_path = args.out or (DEFAULT_OUTPUT_DIR / "twitter_jev_test.json")
-    out_path = out_path.resolve()
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(
-        json.dumps(
-            {
-                "handle": args.handle,
-                "entity": args.entity,
-                "categories": categories,
-                "threshold": args.threshold,
-                "fetched_at": datetime.now(timezone.utc).isoformat(),
-                "summary": {
-                    "fetched": len(items),
-                    "classified": len(latencies_ms),
-                    "kept": len(kept_records),
-                    "dropped": len(dropped_records),
-                    "total_wall_time_s": total_s,
-                    "label_counts": label_counts,
-                },
-                "kept": kept_records,
-                "dropped": dropped_records,
-            },
-            indent=2,
+    def save(total_s: float) -> None:
+        """Always called, even on a mid-run crash — a long paid run's
+        results shouldn't be lost over one bad print or network blip.
+        """
+        print("\n--- summary ---")
+        print(f"fetched:    {len(items)}")
+        print(f"classified: {len(latencies_ms)}")
+        print(f"kept:       {len(kept_records)}")
+        print(f"dropped:    {len(dropped_records)}")
+        print(f"total wall time: {total_s:.1f}s")
+        if latencies_ms:
+            sorted_lat = sorted(latencies_ms)
+            p95_idx = min(len(sorted_lat) - 1, int(len(sorted_lat) * 0.95))
+            print(f"latency min/median/p95/max (ms): "
+                  f"{sorted_lat[0]:.0f} / {statistics.median(sorted_lat):.0f} / "
+                  f"{sorted_lat[p95_idx]:.0f} / {sorted_lat[-1]:.0f}")
+        print(f"label distribution: {label_counts}")
+        print(
+            "\nAccuracy isn't computed above — there's no ground truth. Scroll the "
+            "per-tweet lines and eyeball whether 'unrelated' is doing its job, not "
+            "swallowing real signal (see new_specs/twitter-jev-classification.md "
+            "Design/Approach)."
         )
-    )
-    print(f"\nSaved {len(kept_records)} kept + {len(dropped_records)} dropped records to "
-          f"{out_path.relative_to(REPO_ROOT) if out_path.is_relative_to(REPO_ROOT) else out_path}")
+
+        out_path = args.out or (DEFAULT_OUTPUT_DIR / "twitter_jev_test.json")
+        out_path = out_path.resolve()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(
+            json.dumps(
+                {
+                    "handle": args.handle,
+                    "entity": args.entity,
+                    "categories": categories,
+                    "threshold": args.threshold,
+                    "fetched_at": datetime.now(timezone.utc).isoformat(),
+                    "summary": {
+                        "fetched": len(items),
+                        "classified": len(latencies_ms),
+                        "kept": len(kept_records),
+                        "dropped": len(dropped_records),
+                        "total_wall_time_s": total_s,
+                        "label_counts": label_counts,
+                    },
+                    "kept": kept_records,
+                    "dropped": dropped_records,
+                },
+                indent=2,
+            )
+        )
+        print(f"\nSaved {len(kept_records)} kept + {len(dropped_records)} dropped records to "
+              f"{out_path.relative_to(REPO_ROOT) if out_path.is_relative_to(REPO_ROOT) else out_path}")
+
+    try:
+        with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
+            futures = [pool.submit(classify_one, item) for item in items]
+            for i, future in enumerate(as_completed(futures)):
+                item, elapsed_ms, result = future.result()
+
+                if result is None:
+                    print(f"[{i + 1:>3}] FAILED ({elapsed_ms:.0f}ms): {item.text[:70]!r}")
+                    dropped_records.append({"tweet": item.model_dump(mode="json"), "elapsed_ms": elapsed_ms,
+                                             "error": "JevError"})
+                    continue
+
+                latencies_ms.append(elapsed_ms)
+                label_counts[result.label] = label_counts.get(result.label, 0) + 1
+                unrelated_prob = (result.probabilities or {}).get("unrelated", 0.0)
+                kept = unrelated_prob < args.threshold
+                record = {"tweet": item.model_dump(mode="json"), "elapsed_ms": elapsed_ms,
+                           "result": result.model_dump(mode="json"), "kept": kept}
+                print(f"[{i + 1:>3}] {elapsed_ms:>6.0f}ms  {result.label:<10} "
+                      f"(unrelated={unrelated_prob:.2f}, {'KEPT' if kept else 'dropped'})  {item.text[:70]!r}")
+                (kept_records if kept else dropped_records).append(record)
+    finally:
+        save(time.perf_counter() - batch_start)
 
 
 if __name__ == "__main__":

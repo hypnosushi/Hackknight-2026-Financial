@@ -13,13 +13,21 @@ schema for everything:
    over time for a given market, used to overlay against stock price charts
    in [[display-charting]] — this is time-series market data, not
    classifiable text content, so it does not go through [[jev-classifier]].
+3. **On-demand lookup** — [Twitter Lookup](./twitter-lookup.md) and
+   [Stock Prices](./alpaca.md). Both fetch on demand rather than on a
+   continuous schedule — Twitter Lookup triggered by a chart account
+   lookup or a fired alert, Stock Prices triggered by a ticker/range
+   selected on a chart.
 
 | Spec | Source | Shape |
 |---|---|---|
 | [news-aggregator.md](./news-aggregator.md) | News API | Content item |
 | [twitter-aggregator.md](./twitter-aggregator.md) | Twitter/X API | Content item |
+| [twitter-lookup.md](./twitter-lookup.md) | Twitter/X API | Content item (on-demand: account or keyword) |
 | [polymarket.md](./polymarket.md) | Polymarket public API | Market time-series |
 | [kalshi.md](./kalshi.md) | Kalshi public API | Market time-series |
+| [alpaca.md](./alpaca.md) | Alpaca Market Data API (free tier) | Price time-series (on-demand) |
+| [scheduler.md](./scheduler.md) | — | Runs the four polled sources above on their configured intervals |
 
 ## Shared Normalized Content-Item Schema
 
@@ -34,13 +42,16 @@ Both content aggregators emit items in this shape (draft, not final):
   "text": "<raw content>",
   "entities": ["NVDA", ...],       // tickers/companies matched, if detected
   "url": "<source permalink>",
-  "published_at": "<ISO 8601>"
+  "published_at": "<ISO 8601>",
+  "engagement": {                  // twitter only, from tweet.fields=public_metrics
+    "likes": 0, "reposts": 0, "replies": 0, "quotes": 0
+  }
 }
 ```
 
-Entity/ticker extraction may happen per-source (via each aggregator's own
-ticker/company-name filter) or centrally in [[jev-classifier]] — each
-aggregator spec notes which it currently assumes. This feeds
+Entity matching is a direct lookup against `entities` (match on ticker,
+company name, or person name — no fuzzy/NLP matching), done per-source by
+each aggregator, not centrally in [[jev-classifier]]. This feeds
 [[company-network]]'s co-mention signal and [[news-graphing]]'s chart
 placement.
 
@@ -49,13 +60,15 @@ placement.
 - Content-aggregator items flow to [[jev-classifier]].
 - Prediction-market data flows to [[display-charting]] and
   [[trending-cards]].
+- [scheduler.md](./scheduler.md) — triggers all four sources' polls; each
+  source spec defines its own interval, the scheduler just runs them.
 
 ## Cross-Cutting Open Questions
 
-- Which storage layer sits behind ingestion (none decided yet in this
-  direction — the old `specs/redis-cache-storage.md` is not carried
-  forward; a replacement, if needed, is undecided).
+- Storage layer: Postgres (see [db design](../../mock_db_design/db-design.md));
+  exact stack (Python + which ORM, etc.) still being finalized.
 - Default values for each aggregator's filter set — none are picked yet,
   see each spec's own Open Questions.
 - Shared rate-limit/backoff strategy across workers, or fully independent
-  per source?
+  per source? (See [scheduler.md](./scheduler.md)'s parallel-vs-sequential
+  open question.)

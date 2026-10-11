@@ -2,7 +2,8 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, Text, UniqueConstraint, Uuid, func
+from sqlalchemy import DateTime, ForeignKey, JSON, Numeric, Text, UniqueConstraint, Uuid, func
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.models.base import Base
@@ -27,3 +28,8 @@ class EntityRelationship(Base):
     last_confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     summary: Mapped[str | None] = mapped_column(Text)  # one factual sentence: what the filing says
     evidence_url: Mapped[str | None] = mapped_column(Text)  # the filing fetched in the run that saved this edge
+    # F14: short keywords for Kalshi-market matching. Postgres: native TEXT[] (matches the
+    # ALTER TABLE already run against Neon). SQLite (tests only): JSON, since SQLite has no
+    # array type — ARRAY doesn't compile there and this table IS created on SQLite in tests
+    # (unlike markets/alerts, whose ARRAY columns are only ever DDL-compiled against Postgres).
+    tags: Mapped[list[str] | None] = mapped_column(ARRAY(Text).with_variant(JSON(none_as_null=True), "sqlite"))
