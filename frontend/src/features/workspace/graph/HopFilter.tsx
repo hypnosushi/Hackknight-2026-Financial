@@ -7,7 +7,16 @@ export const DEFAULT_HOPS = 1;
  * one company-to-company edge, so 1 shows direct relationships only and each
  * step up adds the next ring of connections.
  */
-export function HopFilter({ value, onChange }: { value: number; onChange: (hops: number) => void }) {
+export function HopFilter({
+  value,
+  onChange,
+  expanding = 0,
+}: {
+  value: number;
+  onChange: (hops: number) => void;
+  /** Companies whose graphs are still being fetched to fill the outer hops. */
+  expanding?: number;
+}) {
   return (
     // left-20 clears the collapsed projects rail, which overlays the canvas.
     <label
@@ -37,6 +46,11 @@ export function HopFilter({ value, onChange }: { value: number; onChange: (hops:
       <span className="w-3 text-xs font-medium tabular-nums" style={{ color: "var(--text-primary)" }}>
         {value}
       </span>
+      {expanding > 0 && (
+        <span className="text-[10px]" role="status" style={{ color: "var(--text-tertiary)" }}>
+          reading filings for {expanding} {expanding === 1 ? "company" : "companies"}…
+        </span>
+      )}
     </label>
   );
 }

@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D, { type ForceGraphMethods, type NodeObject } from "react-force-graph-2d";
-import { fetchBoardNetwork, pollCompanyGraph, type GraphFailure } from "../../../lib/api/graph";
+import { fetchBoardNetwork, mergeGraphs, pollCompanyGraph, type GraphFailure } from "../../../lib/api/graph";
 import type { CompanyGraph, GraphEdge, GraphNode } from "../../../types/workspaceGraph";
 import { useWorkspace } from "../useWorkspace";
 import { useTheme } from "../../theme/useTheme";
 import { latestHighlightBySymbol } from "../../company-graph/highlights";
 import { DIRECTION_COLOR } from "../../company-graph/labels";
 import { GraphLegend, RELATIONSHIP_COLORS } from "./GraphLegend";
+import { useLiveAlerts } from "../alerts/LiveAlertsProvider";
 import { DEFAULT_HOPS, HopFilter } from "./HopFilter";
 import { NodeInfoCard } from "./NodeInfoCard";
 import { companyHops, computeGraphLayout, moveCompany, targetForce, type GraphLayout, type Point } from "./graphLayout";
@@ -98,6 +99,9 @@ const LAYOUT_PULL = 0.12;
  * Self-gates on state.stage/state.graph so the parent page can mount it
  * unconditionally alongside <TickerInput /> (per the barrel's contract).
  */
+/** Linked companies whose graphs are fetched at once when the hop slider widens. */
+const EXPAND_CONCURRENCY = 2;
+
 export function GraphCanvas() {
   const { state, dispatch } = useWorkspace();
   const { mode, theme } = useTheme();
@@ -185,6 +189,55 @@ export function GraphCanvas() {
   // The newest highlight per company: a company a recent event may affect is
   // drawn in that highlight's direction color, so it stands out before it's clicked.
   const highlightBySymbol = useMemo(() => latestHighlightBySymbol(state.graph?.highlights ?? []), [state.graph]);
+  // Companies a large live market move touched in the last hour flash green
+  // (Yes up) or red (Yes down). The color is the market's direction, not a
+  // call on the stock. Read through a ref inside the draw callback so each
+  // poll doesn't hand ForceGraph2D a new callback and reheat the simulation.
+  const { flashBySymbol } = useLiveAlerts();
+  const flashRef = useRef(flashBySymbol);
+  flashRef.current = flashBySymbol;
+  const hasFlashes = shown.nodes.some((n) => flashBySymbol.has(n.id));
+
+  // Hop expansion. The backend returns one company's direct links, so the
+  // outer hops are filled client-side: every company at hop < maxHops whose
+  // own graph hasn't been fetched gets fetched (polling while the backend
+  // builds it) and merged into state.graph. Each fetch may start a link run
+  // on the backend (SEC filings + an LLM pass, cached for 7 days), so this
+  // runs only when the slider asks for it, a couple of companies at a time,
+  // nearest ring first. `expanded` remembers companies already fetched for
+  // this graph session; `inflight` caps concurrency.
+  const expansionRef = useRef({ expanded: new Set<string>(), inflight: new Map<string, () => void>() });
+  const [expandingCount, setExpandingCount] = useState(0);
+  const graphDone = state.graphStatus !== "loading";
+  useEffect(() => {
+    const graph = state.graph;
+    const ticker = state.ticker;
+    if (!graph || !ticker || !graphDone || maxHops <= 1) return;
+    const exp = expansionRef.current;
+    const frontier = graph.nodes
+      .filter((n) => n.kind === "company" && !n.isCenter)
+      .filter((n) => (hops.get(n.id) ?? Infinity) < maxHops)
+      .filter((n) => !exp.expanded.has(n.id) && !exp.inflight.has(n.id))
+      .sort((a, b) => (hops.get(a.id) ?? 0) - (hops.get(b.id) ?? 0));
+    for (const node of frontier) {
+      if (exp.inflight.size >= EXPAND_CONCURRENCY) break;
+      const finish = () => {
+        exp.inflight.get(node.id)?.();
+        exp.inflight.delete(node.id);
+        exp.expanded.add(node.id);
+        setExpandingCount(exp.inflight.size);
+      };
+      const stop = pollCompanyGraph(node.id, {
+        onUpdate: ({ graph: addition, status }) => {
+          dispatch({ type: "GRAPH_EXPANDED", ticker, graph: mergeGraphs(buildRef.current.graph ?? graph, addition) });
+          if (status !== "running") finish();
+        },
+        onFailure: finish, // a company whose graph can't be read just stays a leaf
+      });
+      exp.inflight.set(node.id, stop);
+    }
+    setExpandingCount(exp.inflight.size);
+  }, [state.graph, state.ticker, graphDone, maxHops, hops, dispatch]);
 
   // Re-frame on whatever the filter leaves — but only once the build-out's
   // own fit has happened, so this never fights the reveal animation.
@@ -277,6 +330,9 @@ export function GraphCanvas() {
     fitZoomRef.current = null;
     layoutRef.current = EMPTY_LAYOUT;
     movedCompaniesRef.current.clear();
+    expansionRef.current.inflight.forEach((stop) => stop());
+    expansionRef.current = { expanded: new Set(), inflight: new Map() };
+    setExpandingCount(0);
     setMaxHops(DEFAULT_HOPS);
     setSelectedId(null);
     setGraphFailure(null);
@@ -552,6 +608,9 @@ export function GraphCanvas() {
           backgroundColor="rgba(0,0,0,0)"
           cooldownTicks={200}
           d3VelocityDecay={0.3}
+          // The library stops redrawing once the simulation cools; a flash is
+          // time-based, so keep frames coming only while something is flashing.
+          autoPauseRedraw={!hasFlashes}
           // Click a node for its details; click it again, or the empty
           // canvas, to dismiss. A drag doesn't count as a click.
           onNodeClick={(node: NodeObject<GraphNode>) => {
@@ -621,6 +680,25 @@ export function GraphCanvas() {
             const isPerson = node.kind === "person";
             const r = nodeRadius(node);
             const highlight = isCenter || isPerson ? undefined : highlightBySymbol.get(node.id);
+            const flash = isPerson ? undefined : flashRef.current.get(String(node.id));
+
+            if (flash) {
+              // ~1.2s pulse: a wide translucent ring that breathes, plus a solid
+              // rim, so it reads at any zoom and over any node color.
+              const phase = (Math.sin((performance.now() / 1200) * 2 * Math.PI) + 1) / 2; // 0..1
+              const color = cssVar(flash.direction === "yes_up" ? "--status-positive" : "--status-negative", flash.direction === "yes_up" ? "#16a34a" : "#dc2626");
+              ctx.beginPath();
+              ctx.arc(x, y, r + 4 + phase * 8, 0, 2 * Math.PI);
+              ctx.fillStyle = color;
+              ctx.globalAlpha = 0.12 + phase * 0.25;
+              ctx.fill();
+              ctx.globalAlpha = 1;
+              ctx.beginPath();
+              ctx.arc(x, y, r + 2, 0, 2 * Math.PI);
+              ctx.lineWidth = 2;
+              ctx.strokeStyle = color;
+              ctx.stroke();
+            }
 
             if (highlight) {
               // Soft halo, like the Company Graph page's highlighted nodes.
@@ -711,7 +789,7 @@ export function GraphCanvas() {
         />
       )}
 
-      <HopFilter value={maxHops} onChange={setMaxHops} />
+      <HopFilter value={maxHops} onChange={setMaxHops} expanding={expandingCount} />
       {selectedNode && state.graph && (
         <NodeInfoCard
           node={selectedNode}
@@ -722,7 +800,12 @@ export function GraphCanvas() {
       )}
       {/* Bottom-left so it clears the hop slider and node card stacked at the top-left. */}
       <div className="absolute bottom-6 left-6 z-10">
-        <GraphLegend showBoardInterlock={hasPeople} showHighlights={hasHighlights} ticker={state.ticker} />
+        <GraphLegend
+          showBoardInterlock={hasPeople}
+          showHighlights={hasHighlights}
+          showFlashes={hasFlashes}
+          ticker={state.ticker}
+        />
       </div>
     </div>
   );

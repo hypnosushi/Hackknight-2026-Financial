@@ -1,6 +1,15 @@
-import { fetchGraph, GRAPH_FAKE, POLL_INTERVAL_MS } from "../../features/company-graph/api";
-import type { BoardResponse, CompanyGraphResponse, GraphStatus } from "../../types/graph";
-import type { CompanyGraph } from "../../types/workspaceGraph";
+import {
+  fetchGraph,
+  GRAPH_FAKE,
+  POLL_INTERVAL_MS,
+} from "../../features/company-graph/api";
+import type {
+  BoardResponse,
+  CompanyGraphResponse,
+  GraphHighlight,
+  GraphStatus,
+} from "../../types/graph";
+import type { CompanyGraph, GraphEdge } from "../../types/workspaceGraph";
 import { ApiError, get } from "../apiClient";
 import { delay } from "./mockUtils";
 
@@ -47,6 +56,45 @@ export function toWorkspaceGraph(response: CompanyGraphResponse): CompanyGraph {
   };
 }
 
+/**
+ * Fold another company's graph into the one on screen, for the hop filter:
+ * the backend only ever returns one company's direct links, so hop 2 is
+ * "every hop-1 company's graph, merged". Nodes join by id (the addition's own
+ * center becomes an ordinary node: there's one searched company), edges by
+ * their endpoints and type, highlights by target and source URL. Returns
+ * `base` itself when nothing new came in, so callers can skip a re-render.
+ */
+export function mergeGraphs(
+  base: CompanyGraph,
+  addition: CompanyGraph,
+): CompanyGraph {
+  const nodeIds = new Set(base.nodes.map((n) => n.id));
+  const newNodes = addition.nodes
+    .filter((n) => !nodeIds.has(n.id))
+    .map((n) => ({ ...n, isCenter: false }));
+  const edgeKey = (e: GraphEdge) =>
+    `${e.source}\u0000${e.target}\u0000${e.relationship}`;
+  const edgeKeys = new Set(base.edges.map(edgeKey));
+  const newEdges = addition.edges.filter((e) => !edgeKeys.has(edgeKey(e)));
+  const highlightKey = (h: GraphHighlight) =>
+    `${h.target}\u0000${h.source_url}`;
+  const highlightKeys = new Set((base.highlights ?? []).map(highlightKey));
+  const newHighlights = (addition.highlights ?? []).filter(
+    (h) => !highlightKeys.has(highlightKey(h)),
+  );
+  if (
+    newNodes.length === 0 &&
+    newEdges.length === 0 &&
+    newHighlights.length === 0
+  )
+    return base;
+  return {
+    nodes: [...base.nodes, ...newNodes],
+    edges: [...base.edges, ...newEdges],
+    highlights: [...(base.highlights ?? []), ...newHighlights],
+  };
+}
+
 export interface GraphUpdate {
   graph: CompanyGraph;
   /** "running" means more links may still arrive; "error" can still come with partial links. */
@@ -62,7 +110,10 @@ export type GraphFailure = "unknown-ticker" | "unavailable";
  * `attempt` counts polls for this search; fake mode uses it to imitate a
  * build in progress.
  */
-export async function fetchCompanyGraph(ticker: string, attempt = 0): Promise<GraphUpdate> {
+export async function fetchCompanyGraph(
+  ticker: string,
+  attempt = 0,
+): Promise<GraphUpdate> {
   const symbol = ticker.trim().replace(/^\$/, "").toUpperCase();
   const response = await fetchGraph(symbol, attempt);
   return { graph: toWorkspaceGraph(response), status: response.status };
@@ -75,9 +126,15 @@ export async function fetchCompanyGraph(ticker: string, attempt = 0): Promise<Gr
  * graph than the last — until "done" or "error". Returns a function that
  * stops the polling.
  */
+// A full link run (SEC + the model) takes a minute or two; this is ~5 min at POLL_INTERVAL_MS.
+const GRAPH_MAX_POLLS = 200;
+
 export function pollCompanyGraph(
   ticker: string,
-  handlers: { onUpdate: (update: GraphUpdate) => void; onFailure: (reason: GraphFailure) => void },
+  handlers: {
+    onUpdate: (update: GraphUpdate) => void;
+    onFailure: (reason: GraphFailure) => void;
+  },
 ): () => void {
   let cancelled = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -87,12 +144,22 @@ export function pollCompanyGraph(
       const update = await fetchCompanyGraph(ticker, attempt);
       if (cancelled) return;
       handlers.onUpdate(update);
-      if (update.status === "running") timer = setTimeout(() => void poll(attempt + 1), POLL_INTERVAL_MS);
+      if (update.status !== "running") return;
+      if (attempt + 1 >= GRAPH_MAX_POLLS) {
+        // A build stuck in "running" (a crashed backend task) shouldn't be polled forever.
+        handlers.onFailure("unavailable");
+        return;
+      }
+      timer = setTimeout(() => void poll(attempt + 1), POLL_INTERVAL_MS);
     } catch (err) {
       if (cancelled) return;
       // 404 is the backend saying the ticker isn't a listed company; anything
       // else (503, a network failure) is the service itself being unreachable.
-      handlers.onFailure(err instanceof ApiError && err.status === 404 ? "unknown-ticker" : "unavailable");
+      handlers.onFailure(
+        err instanceof ApiError && err.status === 404
+          ? "unknown-ticker"
+          : "unavailable",
+      );
     }
   };
   void poll(0);
@@ -111,15 +178,24 @@ const BOARD_MAX_POLLS = 50;
 // (a backend test fails if the two drift apart). Every person in them is
 // invented — made-up data shouldn't attribute board seats to real people.
 // Loaded eagerly at build time; the files are a few KB in total.
-const BOARD_FIXTURES = import.meta.glob<BoardResponse>("../../features/company-graph/board-fixtures/*.json", {
-  eager: true,
-  import: "default",
-});
+const BOARD_FIXTURES = import.meta.glob<BoardResponse>(
+  "../../features/company-graph/board-fixtures/*.json",
+  {
+    eager: true,
+    import: "default",
+  },
+);
 
 /** The fixture board for a ticker; like the backend's fake mode, an unknown ticker has an empty one. */
 async function fakeBoard(ticker: string): Promise<BoardResponse> {
-  const path = Object.keys(BOARD_FIXTURES).find((p) => p.endsWith(`/${ticker.toUpperCase()}.json`));
-  const empty: BoardResponse = { company: { symbol: ticker, name: ticker }, status: "done", members: [] };
+  const path = Object.keys(BOARD_FIXTURES).find((p) =>
+    p.endsWith(`/${ticker.toUpperCase()}.json`),
+  );
+  const empty: BoardResponse = {
+    company: { symbol: ticker, name: ticker },
+    status: "done",
+    members: [],
+  };
   return delay(path ? BOARD_FIXTURES[path] : empty, 150);
 }
 
@@ -133,19 +209,32 @@ async function fakeBoard(ticker: string): Promise<BoardResponse> {
  * reads the fixtures above instead. Either way person ids are SEC person ids,
  * which is what merges a director who sits on two boards into a single node.
  */
-export async function fetchBoardNetwork(companyId: string): Promise<CompanyGraph> {
+export async function fetchBoardNetwork(
+  companyId: string,
+): Promise<CompanyGraph> {
   const load = () =>
-    GRAPH_FAKE ? fakeBoard(companyId) : get<BoardResponse>(`/graph/${encodeURIComponent(companyId)}/board`);
+    GRAPH_FAKE
+      ? fakeBoard(companyId)
+      : get<BoardResponse>(`/graph/${encodeURIComponent(companyId)}/board`);
 
   let board = await load();
-  for (let polls = 1; board.status === "running" && polls < BOARD_MAX_POLLS; polls++) {
+  for (
+    let polls = 1;
+    board.status === "running" && polls < BOARD_MAX_POLLS;
+    polls++
+  ) {
     await delay(undefined, POLL_INTERVAL_MS);
     board = await load();
   }
   return {
     nodes: [
       { id: companyId, kind: "company", label: companyId, isCenter: true },
-      ...board.members.map((m) => ({ id: m.id, kind: "person" as const, label: m.name, role: m.role })),
+      ...board.members.map((m) => ({
+        id: m.id,
+        kind: "person" as const,
+        label: m.name,
+        role: m.role,
+      })),
     ],
     edges: board.members.map((m) => ({
       source: companyId,
