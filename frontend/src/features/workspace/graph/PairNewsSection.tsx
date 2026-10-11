@@ -39,7 +39,8 @@ export function PairNewsSection({ ticker, other }: { ticker: string; other: stri
               href={item.url}
               target="_blank"
               rel="noreferrer"
-              className="text-xs underline"
+              title={item.title}
+              className="line-clamp-3 text-xs hover:underline"
               style={{ color: "var(--text-primary)" }}
             >
               {item.title}
