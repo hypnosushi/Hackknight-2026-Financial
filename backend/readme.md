@@ -21,6 +21,20 @@ uv run uvicorn backend.main:app --reload
 Requires `ALPACA_API_KEY_ID`/`ALPACA_API_SECRET_KEY` and `X_BEARER_TOKEN`
 in `.env` (see `.env.example`).
 
+### On school/campus wifi (TLS blocked on port 5432)
+
+Some networks reset every TLS handshake that isn't on port 443, so Neon's
+Postgres port is unreachable. Neon's proxy also speaks the Postgres wire
+protocol over a WebSocket on 443, so run the local tunnel in a second terminal:
+
+```
+uv run python scripts/neon_ws_tunnel.py        # listens on 127.0.0.1:5433
+```
+
+and point `DATABASE_URL` at `postgresql://<user>:<pass>@127.0.0.1:5433/<db>`
+(no `sslmode`; the WebSocket is already TLS). Keep the direct Neon URL in
+`NEON_DATABASE_URL`, which the tunnel reads for the host.
+
 ## Endpoints
 
 ```
