@@ -73,3 +73,28 @@ def test_complete_structured_raises_on_unexpected_response_shape():
 
     with pytest.raises(LlmError, match="Unexpected LLM response shape"):
         complete_structured("system", "query", _Thing, http_client=_client_with(handler))
+
+
+def test_gemini_provider_uses_googles_endpoint_and_key(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "g-key")
+    monkeypatch.delenv("OPENROUTER", raising=False)
+    seen = {}
+
+    def handler(request):
+        seen["url"], seen["auth"] = str(request.url), request.headers["Authorization"]
+        seen["model"] = json.loads(request.content)["model"]
+        return httpx.Response(200, json={"choices": [{"message": {"content": '{"name": "x", "count": 1}'}}]})
+
+    complete_structured("s", "u", _Thing, model="anthropic/claude-haiku-5.5",
+                        http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert seen["url"].startswith("https://generativelanguage.googleapis.com/")
+    assert seen["auth"] == "Bearer g-key"
+    assert seen["model"] == "gemini-2.5-flash"  # an OpenRouter model name is replaced, not sent to Google
+
+
+def test_gemini_provider_without_key_is_a_clear_error(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    with pytest.raises(LlmError, match="GEMINI_API_KEY"):
+        complete_structured("s", "u", _Thing)

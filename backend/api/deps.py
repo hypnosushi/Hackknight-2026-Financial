@@ -40,7 +40,8 @@ def get_alpaca_gateway() -> AlpacaApiGateway:
 def get_twitter_gateway() -> TwitterApiGateway:
     token = os.environ.get("X_BEARER_TOKEN")
     if not token:
-        raise RuntimeError("Set X_BEARER_TOKEN in .env")
+        # 503, not a bare RuntimeError (a 500 with a traceback): the service is up, X isn't configured.
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Twitter is not configured: set X_BEARER_TOKEN in .env")
     return TwitterApiGateway(bearer_token=token)
 
 

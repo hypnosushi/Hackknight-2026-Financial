@@ -36,14 +36,25 @@ export const RELATIONSHIP_LABELS: Record<RelationshipType, string> = {
   "board-interlock": "Board interlock",
 };
 
-const ORDER: RelationshipType[] = ["supplier", "customer", "partner", "competitor", "sector_peer", "board-interlock"];
+const ORDER: RelationshipType[] = [
+  "supplier",
+  "customer",
+  "partner",
+  "competitor",
+  "sector_peer",
+  "board-interlock",
+];
 
 const DIRECTED: RelationshipType[] = ["supplier", "customer"];
 
 /** What a directed edge means, phrased around the searched company when we know it. */
 function describe(rel: RelationshipType, ticker: string | null): string | null {
-  if (rel === "supplier") return ticker ? `sells to ${ticker}` : "sells to the company it points at";
-  if (rel === "customer") return ticker ? `buys from ${ticker}` : "buys from the company pointing at it";
+  if (rel === "supplier")
+    return ticker ? `sells to ${ticker}` : "sells to the company it points at";
+  if (rel === "customer")
+    return ticker
+      ? `buys from ${ticker}`
+      : "buys from the company pointing at it";
   return null;
 }
 
@@ -55,7 +66,13 @@ function EdgeSwatch({ rel }: { rel: RelationshipType }) {
   const color = RELATIONSHIP_COLORS[rel];
   const directed = DIRECTED.includes(rel);
   return (
-    <svg width="26" height="10" viewBox="0 0 26 10" className="shrink-0" aria-hidden="true">
+    <svg
+      width="26"
+      height="10"
+      viewBox="0 0 26 10"
+      className="shrink-0"
+      aria-hidden="true"
+    >
       <line
         x1="1"
         y1="5"
@@ -84,7 +101,9 @@ export function GraphLegend({
   showFlashes?: boolean;
   ticker?: string | null;
 }) {
-  const items = showBoardInterlock ? ORDER : ORDER.filter((r) => r !== "board-interlock");
+  const items = showBoardInterlock
+    ? ORDER
+    : ORDER.filter((r) => r !== "board-interlock");
 
   return (
     <div
@@ -95,7 +114,10 @@ export function GraphLegend({
         borderRadius: "var(--radius-control)",
       }}
     >
-      <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-tertiary)" }}>
+      <span
+        className="text-[10px] font-semibold uppercase tracking-wider"
+        style={{ color: "var(--text-tertiary)" }}
+      >
         Relationship
       </span>
       {items.map((rel) => {
@@ -103,9 +125,17 @@ export function GraphLegend({
         return (
           <div key={rel} className="flex items-center gap-2">
             <EdgeSwatch rel={rel} />
-            <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
+            <span
+              className="text-xs"
+              style={{ color: "var(--text-secondary)" }}
+            >
               {RELATIONSHIP_LABELS[rel]}
-              {description && <span style={{ color: "var(--text-tertiary)" }}> — {description}</span>}
+              {description && (
+                <span style={{ color: "var(--text-tertiary)" }}>
+                  {" "}
+                  — {description}
+                </span>
+              )}
             </span>
           </div>
         );
@@ -130,15 +160,25 @@ export function GraphLegend({
             <div key={token} className="flex items-center gap-2">
               <span
                 className="h-2.5 w-2.5 shrink-0 rounded-full"
-                style={{ background: `var(${token})`, boxShadow: `0 0 0 4px color-mix(in srgb, var(${token}) 30%, transparent)` }}
+                style={{
+                  background: `var(${token})`,
+                  boxShadow: `0 0 0 4px color-mix(in srgb, var(${token}) 30%, transparent)`,
+                }}
               />
-              <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
+              <span
+                className="text-xs"
+                style={{ color: "var(--text-secondary)" }}
+              >
                 {label}
               </span>
             </div>
           ))}
-          <span className="text-[10px]" style={{ color: "var(--text-tertiary)" }}>
-            Flashing = a market it's exposed to moved sharply (Yes price, not the stock)
+          <span
+            className="text-[10px]"
+            style={{ color: "var(--text-tertiary)" }}
+          >
+            Flashing = a market it's exposed to moved sharply (Yes price, not
+            the stock)
           </span>
         </>
       )}
@@ -154,15 +194,26 @@ export function GraphLegend({
             <div key={direction} className="flex items-center gap-2">
               <span
                 className="h-2.5 w-2.5 shrink-0 rounded-full"
-                style={{ background: DIRECTION_COLOR[direction], boxShadow: `0 0 0 3px ${DIRECTION_COLOR[direction]}33` }}
+                style={{
+                  background: DIRECTION_COLOR[direction],
+                  boxShadow: `0 0 0 3px color-mix(in srgb, ${DIRECTION_COLOR[direction]} 25%, transparent)`,
+                }}
               />
-              <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
-                {DIRECTION_LABEL[direction].replace(/^./, (c) => c.toUpperCase())}
+              <span
+                className="text-xs"
+                style={{ color: "var(--text-secondary)" }}
+              >
+                {DIRECTION_LABEL[direction].replace(/^./, (c) =>
+                  c.toUpperCase(),
+                )}
               </span>
             </div>
           ))}
-          <span className="text-[10px]" style={{ color: "var(--text-tertiary)" }}>
-            Click a colored company for the event
+          <span
+            className="text-[10px]"
+            style={{ color: "var(--text-tertiary)" }}
+          >
+            Pulsing company = a recent event; click it for details
           </span>
         </>
       )}

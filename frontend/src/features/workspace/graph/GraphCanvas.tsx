@@ -1,22 +1,43 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import ForceGraph2D, { type ForceGraphMethods, type NodeObject } from "react-force-graph-2d";
-import { fetchBoardNetwork, mergeGraphs, pollCompanyGraph, type GraphFailure } from "../../../lib/api/graph";
-import type { CompanyGraph, GraphEdge, GraphNode } from "../../../types/workspaceGraph";
+import ForceGraph2D, {
+  type ForceGraphMethods,
+  type NodeObject,
+} from "react-force-graph-2d";
+import {
+  fetchBoardNetwork,
+  mergeGraphs,
+  pollCompanyGraph,
+  type GraphFailure,
+} from "../../../lib/api/graph";
+import type {
+  CompanyGraph,
+  GraphEdge,
+  GraphNode,
+} from "../../../types/workspaceGraph";
 import { useWorkspace } from "../useWorkspace";
 import { useTheme } from "../../theme/useTheme";
 import { latestHighlightBySymbol } from "../../company-graph/highlights";
-import { DIRECTION_COLOR } from "../../company-graph/labels";
+import { DIRECTION_TOKEN } from "../../company-graph/labels";
 import { GraphLegend, RELATIONSHIP_COLORS } from "./GraphLegend";
 import { useLiveAlerts } from "../alerts/LiveAlertsProvider";
 import { DEFAULT_HOPS, HopFilter } from "./HopFilter";
 import { NodeInfoCard } from "./NodeInfoCard";
-import { companyHops, computeGraphLayout, moveCompany, targetForce, type GraphLayout, type Point } from "./graphLayout";
+import {
+  companyHops,
+  computeGraphLayout,
+  moveCompany,
+  targetForce,
+  type GraphLayout,
+  type Point,
+} from "./graphLayout";
 
 /** Reads a theme CSS variable at draw time so canvas-rendered nodes stay in sync
  * with the active [data-theme]/[data-mode] — canvas can't consume var() directly. */
 function cssVar(name: string, fallback: string): string {
   if (typeof window === "undefined") return fallback;
-  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const value = getComputedStyle(document.documentElement)
+    .getPropertyValue(name)
+    .trim();
   return value || fallback;
 }
 
@@ -54,12 +75,18 @@ type VisibleGraph = { nodes: GraphNode[]; edges: GraphEdge[] };
 /** One board seat: a person and the company -> person edge that seats them. */
 type Seat = { person: GraphNode; edge: GraphEdge };
 
-const EMPTY_LAYOUT: GraphLayout = { targets: new Map(), personAnchors: new Map(), labelAbove: new Set() };
+const EMPTY_LAYOUT: GraphLayout = {
+  targets: new Map(),
+  personAnchors: new Map(),
+  labelAbove: new Set(),
+};
 
 // The simulation swaps an edge's id strings for live node objects once the
 // edge is in play, so an edge's ends have to be read through this.
 function endId(end: unknown): string {
-  return typeof end === "object" && end !== null ? (end as GraphNode).id : String(end);
+  return typeof end === "object" && end !== null
+    ? (end as GraphNode).id
+    : String(end);
 }
 
 function edgeKey(e: GraphEdge): string {
@@ -74,10 +101,16 @@ function edgeKey(e: GraphEdge): string {
  * it rewrites their source/target in place and `graph.edges` has to keep its
  * id strings. Board edges aren't in `graph` and pass through untouched.
  */
-function syncEdges(nodes: GraphNode[], edges: GraphEdge[], graph: CompanyGraph): GraphEdge[] {
+function syncEdges(
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  graph: CompanyGraph,
+): GraphEdge[] {
   const ids = new Set(nodes.map((n) => n.id));
   const wanted = new Map(
-    graph.edges.filter((e) => ids.has(e.source) && ids.has(e.target)).map((e) => [edgeKey(e), e] as const),
+    graph.edges
+      .filter((e) => ids.has(e.source) && ids.has(e.target))
+      .map((e) => [edgeKey(e), e] as const),
   );
   const kept = edges.filter((e) =>
     e.relationship === "board-interlock"
@@ -85,8 +118,12 @@ function syncEdges(nodes: GraphNode[], edges: GraphEdge[], graph: CompanyGraph):
       : wanted.has(edgeKey(e)),
   );
   const have = new Set(kept.map(edgeKey));
-  const added = [...wanted].filter(([key]) => !have.has(key)).map(([, e]) => ({ ...e }));
-  return added.length === 0 && kept.length === edges.length ? edges : [...kept, ...added];
+  const added = [...wanted]
+    .filter(([key]) => !have.has(key))
+    .map(([, e]) => ({ ...e }));
+  return added.length === 0 && kept.length === edges.length
+    ? edges
+    : [...kept, ...added];
 }
 
 // How hard each node is pulled toward its slot in the layout per tick.
@@ -107,8 +144,13 @@ export function GraphCanvas() {
   const { mode, theme } = useTheme();
   const [containerEl, setContainerEl] = useState<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
-  const fgRef = useRef<ForceGraphMethods<NodeObject<GraphNode>, GraphEdge> | undefined>(undefined);
-  const [visible, setVisible] = useState<VisibleGraph>({ nodes: [], edges: [] });
+  const fgRef = useRef<
+    ForceGraphMethods<NodeObject<GraphNode>, GraphEdge> | undefined
+  >(undefined);
+  const [visible, setVisible] = useState<VisibleGraph>({
+    nodes: [],
+    edges: [],
+  });
   // Set when the graph couldn't be fetched (as opposed to the backend
   // reporting its own build as failed, which arrives as a normal response).
   const [graphFailure, setGraphFailure] = useState<GraphFailure | null>(null);
@@ -168,7 +210,9 @@ export function GraphCanvas() {
     // A company with no path to the center has no hop count, so the filter
     // leaves it alone rather than hiding it at every setting.
     const keep = new Set(
-      visible.nodes.filter((n) => n.kind === "company" && (hops.get(n.id) ?? 0) <= maxHops).map((n) => n.id),
+      visible.nodes
+        .filter((n) => n.kind === "company" && (hops.get(n.id) ?? 0) <= maxHops)
+        .map((n) => n.id),
     );
     // A person stays while at least one of their companies does.
     for (const e of visible.edges) {
@@ -177,18 +221,26 @@ export function GraphCanvas() {
     }
     return {
       nodes: visible.nodes.filter((n) => keep.has(n.id)),
-      edges: visible.edges.filter((e) => keep.has(endId(e.source)) && keep.has(endId(e.target))),
+      edges: visible.edges.filter(
+        (e) => keep.has(endId(e.source)) && keep.has(endId(e.target)),
+      ),
     };
   }, [visible, maxHops, hops]);
 
   // Memoized so an unrelated re-render doesn't hand ForceGraph2D a new
   // graphData object — it compares by identity and reheats the simulation
   // on every new one.
-  const graphData = useMemo(() => ({ nodes: shown.nodes, links: shown.edges }), [shown]);
+  const graphData = useMemo(
+    () => ({ nodes: shown.nodes, links: shown.edges }),
+    [shown],
+  );
 
   // The newest highlight per company: a company a recent event may affect is
   // drawn in that highlight's direction color, so it stands out before it's clicked.
-  const highlightBySymbol = useMemo(() => latestHighlightBySymbol(state.graph?.highlights ?? []), [state.graph]);
+  const highlightBySymbol = useMemo(
+    () => latestHighlightBySymbol(state.graph?.highlights ?? []),
+    [state.graph],
+  );
   // Companies a large live market move touched in the last hour flash green
   // (Yes up) or red (Yes down). The color is the market's direction, not a
   // call on the stock. Read through a ref inside the draw callback so each
@@ -196,7 +248,10 @@ export function GraphCanvas() {
   const { flashBySymbol } = useLiveAlerts();
   const flashRef = useRef(flashBySymbol);
   flashRef.current = flashBySymbol;
-  const hasFlashes = shown.nodes.some((n) => flashBySymbol.has(n.id));
+  // Highlights pulse too, so the canvas must keep redrawing while either is on screen.
+  const hasFlashes = shown.nodes.some(
+    (n) => flashBySymbol.has(n.id) || highlightBySymbol.has(n.id),
+  );
 
   // Hop expansion. The backend returns one company's direct links, so the
   // outer hops are filled client-side: every company at hop < maxHops whose
@@ -206,7 +261,10 @@ export function GraphCanvas() {
   // runs only when the slider asks for it, a couple of companies at a time,
   // nearest ring first. `expanded` remembers companies already fetched for
   // this graph session; `inflight` caps concurrency.
-  const expansionRef = useRef({ expanded: new Set<string>(), inflight: new Map<string, () => void>() });
+  const expansionRef = useRef({
+    expanded: new Set<string>(),
+    inflight: new Map<string, () => void>(),
+  });
   const [expandingCount, setExpandingCount] = useState(0);
   const graphDone = state.graphStatus !== "loading";
   useEffect(() => {
@@ -229,7 +287,11 @@ export function GraphCanvas() {
       };
       const stop = pollCompanyGraph(node.id, {
         onUpdate: ({ graph: addition, status }) => {
-          dispatch({ type: "GRAPH_EXPANDED", ticker, graph: mergeGraphs(buildRef.current.graph ?? graph, addition) });
+          dispatch({
+            type: "GRAPH_EXPANDED",
+            ticker,
+            graph: mergeGraphs(buildRef.current.graph ?? graph, addition),
+          });
           if (status !== "running") finish();
         },
         onFailure: finish, // a company whose graph can't be read just stays a leaf
@@ -243,7 +305,10 @@ export function GraphCanvas() {
   // own fit has happened, so this never fights the reveal animation.
   useEffect(() => {
     if (fitZoomRef.current === null) return;
-    const fit = window.setTimeout(() => fgRef.current?.zoomToFit(600, ZOOM_FIT_FINAL_PADDING), 50);
+    const fit = window.setTimeout(
+      () => fgRef.current?.zoomToFit(600, ZOOM_FIT_FINAL_PADDING),
+      50,
+    );
     const measure = window.setTimeout(() => {
       fitZoomRef.current = fgRef.current?.zoom() ?? fitZoomRef.current;
     }, 700);
@@ -304,7 +369,8 @@ export function GraphCanvas() {
     const ticker = state.ticker;
     if (!building || !ticker) return;
     return pollCompanyGraph(ticker, {
-      onUpdate: ({ graph, status }) => dispatch({ type: "GRAPH_LOADED", ticker, graph, status }),
+      onUpdate: ({ graph, status }) =>
+        dispatch({ type: "GRAPH_LOADED", ticker, graph, status }),
       onFailure: (reason) => {
         setGraphFailure(reason);
         dispatch({ type: "GRAPH_STATUS", status: "error" });
@@ -385,7 +451,9 @@ export function GraphCanvas() {
       );
       // A fresh layout knows nothing about companies the user has dragged —
       // move them (and their boards) back to where they were dropped.
-      movedCompaniesRef.current.forEach((to, id) => moveCompany(layoutRef.current, id, to));
+      movedCompaniesRef.current.forEach((to, id) =>
+        moveCompany(layoutRef.current, id, to),
+      );
       fgRef.current?.d3ReheatSimulation();
     };
 
@@ -412,7 +480,8 @@ export function GraphCanvas() {
             // prev.nodes are the same objects the simulation mutates, so
             // the company's x/y here is where it currently sits on screen —
             // each person pops out from its own company, not the origin.
-            const company = prev.nodes.find((n) => n.id === edge.source) as PositionedNode | undefined;
+            const company = prev.nodes.find((n) => n.id === edge.source) as
+              PositionedNode | undefined;
             const nodes = alreadyShown
               ? prev.nodes
               : [
@@ -439,11 +508,15 @@ export function GraphCanvas() {
       if (!companyIds.has(id)) build.queued.delete(id);
     });
     setVisible((prev) => {
-      const nodes = prev.nodes.some((n) => n.kind === "company" && !companyIds.has(n.id))
+      const nodes = prev.nodes.some(
+        (n) => n.kind === "company" && !companyIds.has(n.id),
+      )
         ? prev.nodes.filter((n) => n.kind !== "company" || companyIds.has(n.id))
         : prev.nodes;
       const edges = syncEdges(nodes, prev.edges, graph);
-      return nodes === prev.nodes && edges === prev.edges ? prev : { nodes, edges };
+      return nodes === prev.nodes && edges === prev.edges
+        ? prev
+        : { nodes, edges };
     });
 
     // Queue the companies that are new in this version, center first, each
@@ -473,7 +546,10 @@ export function GraphCanvas() {
           const nodes = [...prev.nodes, { ...node, ...spawn }];
           // Against the latest graph, not the one that queued this node: a
           // later poll may have brought more of its edges in the meantime.
-          return { nodes, edges: syncEdges(nodes, prev.edges, build.graph ?? graph) };
+          return {
+            nodes,
+            edges: syncEdges(nodes, prev.edges, build.graph ?? graph),
+          };
         });
       }, at - now);
     }
@@ -492,7 +568,9 @@ export function GraphCanvas() {
           .then((board) => {
             if (build.token !== token) return;
             const seats = board.edges.flatMap((edge) => {
-              const person = board.nodes.find((n) => n.id === edge.target && n.kind === "person");
+              const person = board.nodes.find(
+                (n) => n.id === edge.target && n.kind === "person",
+              );
               return person ? [{ person, edge }] : [];
             });
             if (seats.length === 0) return;
@@ -534,14 +612,22 @@ export function GraphCanvas() {
   const selectedBoards =
     selectedNode?.kind === "person"
       ? shown.edges
-          .filter((e) => e.relationship === "board-interlock" && endId(e.target) === selectedNode.id)
+          .filter(
+            (e) =>
+              e.relationship === "board-interlock" &&
+              endId(e.target) === selectedNode.id,
+          )
           .flatMap((e) => shown.nodes.filter((n) => n.id === endId(e.source)))
       : [];
   const hasPeople = shown.nodes.some((n) => n.kind === "person");
   const hasHighlights = shown.nodes.some((n) => highlightBySymbol.has(n.id));
 
   return (
-    <div ref={setContainerEl} className="relative h-full w-full overflow-hidden" style={{ background: "var(--bg)" }}>
+    <div
+      ref={setContainerEl}
+      className="relative h-full w-full overflow-hidden"
+      style={{ background: "var(--bg)" }}
+    >
       <DotGrid />
 
       {state.graphStatus === "loading" && visible.nodes.length === 0 && (
@@ -579,24 +665,28 @@ export function GraphCanvas() {
 
       {/* Progress and partial-failure notes while there's already a graph on
           screen — the backend returns the links it has before it's finished. */}
-      {visible.nodes.length > 0 && (state.graphStatus !== "done" || state.graph?.nodes.length === 1) && (
-        <div
-          className="absolute left-1/2 top-6 z-10 -translate-x-1/2 px-3 py-1.5 text-xs"
-          role="status"
-          style={{
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--radius-control)",
-            color: state.graphStatus === "error" ? "var(--status-negative)" : "var(--text-secondary)",
-          }}
-        >
-          {state.graphStatus === "error"
-            ? `Some of ${state.ticker}'s relationships couldn't be loaded — showing what was found.`
-            : state.graphStatus === "done"
-              ? `No relationships found for ${state.ticker}.`
-              : `Reading filings for ${state.ticker}…`}
-        </div>
-      )}
+      {visible.nodes.length > 0 &&
+        (state.graphStatus !== "done" || state.graph?.nodes.length === 1) && (
+          <div
+            className="absolute left-1/2 top-6 z-10 -translate-x-1/2 px-3 py-1.5 text-xs"
+            role="status"
+            style={{
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--radius-control)",
+              color:
+                state.graphStatus === "error"
+                  ? "var(--status-negative)"
+                  : "var(--text-secondary)",
+            }}
+          >
+            {state.graphStatus === "error"
+              ? `Some of ${state.ticker}'s relationships couldn't be loaded — showing what was found.`
+              : state.graphStatus === "done"
+                ? `No relationships found for ${state.ticker}.`
+                : `Reading filings for ${state.ticker}…`}
+          </div>
+        )}
 
       {visible.nodes.length > 0 && size.width > 0 && (
         <ForceGraph2D
@@ -621,7 +711,10 @@ export function GraphCanvas() {
           // A company's board follows it live while it's being dragged.
           onNodeDrag={(node: NodeObject<GraphNode>) => {
             if (node.kind !== "company") return;
-            moveCompany(layoutRef.current, String(node.id), { x: node.x ?? 0, y: node.y ?? 0 });
+            moveCompany(layoutRef.current, String(node.id), {
+              x: node.x ?? 0,
+              y: node.y ?? 0,
+            });
           }}
           // react-force-graph releases a node when the drag ends, and the
           // layout force would then pull it straight back to its slot.
@@ -630,14 +723,23 @@ export function GraphCanvas() {
             node.fx = node.x;
             node.fy = node.y;
             if (node.kind === "company") {
-              movedCompaniesRef.current.set(String(node.id), { x: node.x ?? 0, y: node.y ?? 0 });
+              movedCompaniesRef.current.set(String(node.id), {
+                x: node.x ?? 0,
+                y: node.y ?? 0,
+              });
             }
           }}
-          linkColor={(link) => RELATIONSHIP_COLORS[(link as unknown as GraphEdge).relationship]}
+          linkColor={(link) =>
+            RELATIONSHIP_COLORS[(link as unknown as GraphEdge).relationship]
+          }
           // Board-interlock edges (company -> board member) read as a
           // secondary, quieter relationship than the primary company-to-
           // company ones, so they stay visibly thinner.
-          linkWidth={(link) => ((link as unknown as GraphEdge).relationship === "board-interlock" ? 1 : 3)}
+          linkWidth={(link) =>
+            (link as unknown as GraphEdge).relationship === "board-interlock"
+              ? 1
+              : 3
+          }
           // Color alone says an edge is a supply relationship but not which
           // way it runs, so those edges get an arrowhead at their midpoint
           // pointing the way goods flow: supplier -> customer. Drawn by hand
@@ -646,15 +748,18 @@ export function GraphCanvas() {
           linkCanvasObjectMode={() => "after"}
           linkCanvasObject={(link, ctx) => {
             const { relationship } = link as unknown as GraphEdge;
-            if (relationship !== "supplier" && relationship !== "customer") return;
+            if (relationship !== "supplier" && relationship !== "customer")
+              return;
             // GraphEdge types the ends as id strings, but the simulation swaps
             // them for the live node objects once the link is in play.
             const { source, target } = link as unknown as {
               source: PositionedNode | string;
               target: PositionedNode | string;
             };
-            if (typeof source !== "object" || typeof target !== "object") return;
-            const [from, to] = relationship === "supplier" ? [target, source] : [source, target];
+            if (typeof source !== "object" || typeof target !== "object")
+              return;
+            const [from, to] =
+              relationship === "supplier" ? [target, source] : [source, target];
             const dx = (to.x ?? 0) - (from.x ?? 0);
             const dy = (to.y ?? 0) - (from.y ?? 0);
             const len = Math.hypot(dx, dy);
@@ -667,8 +772,14 @@ export function GraphCanvas() {
             const baseY = tipY - uy * ARROW_LENGTH;
             ctx.beginPath();
             ctx.moveTo(tipX, tipY);
-            ctx.lineTo(baseX - uy * ARROW_HALF_WIDTH, baseY + ux * ARROW_HALF_WIDTH);
-            ctx.lineTo(baseX + uy * ARROW_HALF_WIDTH, baseY - ux * ARROW_HALF_WIDTH);
+            ctx.lineTo(
+              baseX - uy * ARROW_HALF_WIDTH,
+              baseY + ux * ARROW_HALF_WIDTH,
+            );
+            ctx.lineTo(
+              baseX + uy * ARROW_HALF_WIDTH,
+              baseY - ux * ARROW_HALF_WIDTH,
+            );
             ctx.closePath();
             ctx.fillStyle = RELATIONSHIP_COLORS[relationship];
             ctx.fill();
@@ -679,14 +790,23 @@ export function GraphCanvas() {
             const isCenter = !!node.isCenter;
             const isPerson = node.kind === "person";
             const r = nodeRadius(node);
-            const highlight = isCenter || isPerson ? undefined : highlightBySymbol.get(node.id);
-            const flash = isPerson ? undefined : flashRef.current.get(String(node.id));
+            const highlight =
+              isCenter || isPerson ? undefined : highlightBySymbol.get(node.id);
+            const flash = isPerson
+              ? undefined
+              : flashRef.current.get(String(node.id));
 
             if (flash) {
               // ~1.2s pulse: a wide translucent ring that breathes, plus a solid
               // rim, so it reads at any zoom and over any node color.
-              const phase = (Math.sin((performance.now() / 1200) * 2 * Math.PI) + 1) / 2; // 0..1
-              const color = cssVar(flash.direction === "yes_up" ? "--status-positive" : "--status-negative", flash.direction === "yes_up" ? "#16a34a" : "#dc2626");
+              const phase =
+                (Math.sin((performance.now() / 1200) * 2 * Math.PI) + 1) / 2; // 0..1
+              const color = cssVar(
+                flash.direction === "yes_up"
+                  ? "--status-positive"
+                  : "--status-negative",
+                flash.direction === "yes_up" ? "#16a34a" : "#dc2626",
+              );
               ctx.beginPath();
               ctx.arc(x, y, r + 4 + phase * 8, 0, 2 * Math.PI);
               ctx.fillStyle = color;
@@ -700,12 +820,21 @@ export function GraphCanvas() {
               ctx.stroke();
             }
 
-            if (highlight) {
-              // Soft halo, like the Company Graph page's highlighted nodes.
+            if (highlight && !flash) {
+              // A recent event pulses in its direction's status color, the same motion as a live
+              // move (a live move on the same node takes precedence: it is the newer signal).
+              const phase =
+                (Math.sin((performance.now() / 1600) * 2 * Math.PI) + 1) / 2;
+              const color = cssVar(
+                DIRECTION_TOKEN[highlight.direction],
+                highlight.direction === "may_benefit" ? "#16a34a" : "#dc2626",
+              );
               ctx.beginPath();
-              ctx.arc(x, y, r + 5, 0, 2 * Math.PI);
-              ctx.fillStyle = `${DIRECTION_COLOR[highlight.direction]}33`;
+              ctx.arc(x, y, r + 3 + phase * 6, 0, 2 * Math.PI);
+              ctx.fillStyle = color;
+              ctx.globalAlpha = 0.1 + phase * 0.2;
               ctx.fill();
+              ctx.globalAlpha = 1;
             }
             ctx.beginPath();
             ctx.arc(x, y, r, 0, 2 * Math.PI);
@@ -714,7 +843,7 @@ export function GraphCanvas() {
               : isPerson
                 ? RELATIONSHIP_COLORS["board-interlock"]
                 : highlight
-                  ? DIRECTION_COLOR[highlight.direction]
+                  ? cssVar(DIRECTION_TOKEN[highlight.direction], "#16a34a")
                   : cssVar("--surface-elevated", "#fff");
             ctx.fill();
             if (!isCenter && !isPerson && !highlight) {
@@ -735,14 +864,21 @@ export function GraphCanvas() {
             // enough — the main graph would get cluttered with a name for
             // every board member the instant one company's board loads.
             const fitZoom = fitZoomRef.current;
-            if (isPerson && (fitZoom === null || globalScale < fitZoom * PERSON_LABEL_ZOOM_MULTIPLIER)) return;
+            if (
+              isPerson &&
+              (fitZoom === null ||
+                globalScale < fitZoom * PERSON_LABEL_ZOOM_MULTIPLIER)
+            )
+              return;
 
             if (isPerson) {
               // Lighter, smaller and secondary-colored than company names, and
               // always horizontal. Each name goes on the side of its dot that
               // faces away from the company, so names around a board spread
               // outward instead of piling onto the company.
-              const anchor = layoutRef.current.personAnchors.get(String(node.id)) ?? { x: 0, y: 0 };
+              const anchor = layoutRef.current.personAnchors.get(
+                String(node.id),
+              ) ?? { x: 0, y: 0 };
               const onLeft = x < anchor.x;
               ctx.font = `300 ${Math.max(9 / globalScale, 2.5)}px "Plus Jakarta Sans", sans-serif`;
               ctx.textAlign = onLeft ? "right" : "left";
@@ -789,7 +925,11 @@ export function GraphCanvas() {
         />
       )}
 
-      <HopFilter value={maxHops} onChange={setMaxHops} expanding={expandingCount} />
+      <HopFilter
+        value={maxHops}
+        onChange={setMaxHops}
+        expanding={expandingCount}
+      />
       {selectedNode && state.graph && (
         <NodeInfoCard
           node={selectedNode}
@@ -816,7 +956,8 @@ function DotGrid() {
     <div
       className="pointer-events-none absolute inset-0"
       style={{
-        backgroundImage: "radial-gradient(circle, var(--grid-dot) 1px, transparent 1px)",
+        backgroundImage:
+          "radial-gradient(circle, var(--grid-dot) 1px, transparent 1px)",
         backgroundSize: "28px 28px",
         // Tiles from (0,0) by default, so unless the container's size is an
         // exact multiple of 28px the pattern reads as lopsided — flush dots
@@ -829,9 +970,17 @@ function DotGrid() {
   );
 }
 
-function EmptyCanvas({ containerRef }: { containerRef: (el: HTMLDivElement | null) => void }) {
+function EmptyCanvas({
+  containerRef,
+}: {
+  containerRef: (el: HTMLDivElement | null) => void;
+}) {
   return (
-    <div ref={containerRef} className="relative h-full w-full overflow-hidden" style={{ background: "var(--bg)" }}>
+    <div
+      ref={containerRef}
+      className="relative h-full w-full overflow-hidden"
+      style={{ background: "var(--bg)" }}
+    >
       <DotGrid />
     </div>
   );
