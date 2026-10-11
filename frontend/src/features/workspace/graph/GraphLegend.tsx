@@ -1,3 +1,4 @@
+import { LIVE_WINDOW_LABEL } from "../alerts/LiveAlertsProvider";
 import type { RelationshipType } from "../../../types/workspaceGraph";
 import { DIRECTION_COLOR, DIRECTION_LABEL } from "../../company-graph/labels";
 
@@ -146,7 +147,7 @@ export function GraphLegend({
         className="mt-1 text-[10px] font-semibold uppercase tracking-wider"
         style={{ color: "var(--text-tertiary)" }}
       >
-        Live move · last hour
+        Live move · last {LIVE_WINDOW_LABEL}
       </span>
       <div className="flex items-center gap-2">
         <span

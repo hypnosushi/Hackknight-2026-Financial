@@ -127,7 +127,7 @@ function LiveEventCard({
 }
 
 /**
- * The sidebar's bottom half: unusual market moves from the last hour at or
+ * The sidebar's bottom half: unusual market moves from the live window (LIVE_WINDOW_LABEL) at or
  * above the "large" score, newest first. Cards toggle into the chart selection
  * like recommendations do; a company chip opens that ticker on the graph.
  * A list too long for its box scrolls on its own and loops (useAutoScroll).
@@ -199,7 +199,7 @@ export function LiveEventsList() {
         >
           {status === "unavailable"
             ? "Live alerts unavailable: the backend can't be reached."
-            : `No market moved past score ${LARGE_MOVE_SCORE} in the last hour.`}
+            : `No market moved past score ${LARGE_MOVE_SCORE} in the last ${LIVE_WINDOW_LABEL}.`}
         </p>
       ) : (
         <div
