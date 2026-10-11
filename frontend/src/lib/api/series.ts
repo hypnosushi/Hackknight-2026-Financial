@@ -21,6 +21,13 @@ const LEGACY_SERIES_RANGE: Record<ChartRange, string> = { "1d": "1w", "1w": "1w"
 /** Market proxy used to strip the market-wide move out of the stock's returns (see lib/chart/relationship.ts). */
 export const BENCHMARK_TICKER = "SPY";
 
+/** The instant a calendar day ends: 00:00 UTC of the next day, which is what the backend's windows expect. */
+export function dayEnd(day: string): string {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString();
+}
+
 /** Both endpoints return rows of this shape (price_or_odds is USD close for stocks, 0-100 for markets). */
 interface SeriesRow {
   source: string;
@@ -127,9 +134,14 @@ export async function fetchSeriesBundle(
   range: ChartRange,
   /** marketId -> card title; falls back to a prettified id. */
   labels: Record<string, string> = {},
+  /** Calendar day ("YYYY-MM-DD") the window should end on; null/undefined = now. */
+  day: string | null = null,
 ): Promise<SeriesBundle> {
-  // One shared "now" so the stock and SPY mocks land on identical timestamps (needed to align them).
-  const now = Date.now();
+  // The window end the backend is asked for: the end of `day` (00:00 UTC the next day), or now.
+  // Mocks share the same instant so the stock and SPY fallbacks land on identical timestamps.
+  const endIso = day ? dayEnd(day) : null;
+  const now = endIso ? Date.parse(endIso) : Date.now();
+  const endParam = endIso ? `&end=${encodeURIComponent(endIso)}` : "";
   const upperRange = range.toUpperCase();
   const wantBenchmark = ticker.toUpperCase() !== BENCHMARK_TICKER;
 
@@ -139,7 +151,7 @@ export async function fetchSeriesBundle(
   const histories = await Promise.all(
     marketIds.map((id) =>
       get<HistoryResponse>(
-        `/markets/${encodeURIComponent(id)}/history?stock=${encodeURIComponent(ticker)}&range=${upperRange}`,
+        `/markets/${encodeURIComponent(id)}/history?stock=${encodeURIComponent(ticker)}&range=${upperRange}${endParam}`,
       ).catch(() => null),
     ),
   );
@@ -148,7 +160,7 @@ export async function fetchSeriesBundle(
 
   const stockPoints: Promise<RawPoint[]> = firstHistory
     ? Promise.resolve(historyStockPoints(firstHistory))
-    : get<SeriesRow[]>(`/stocks/${encodeURIComponent(ticker)}/prices?tier=${STOCK_TIER[range]}`)
+    : get<SeriesRow[]>(`/stocks/${encodeURIComponent(ticker)}/prices?tier=${STOCK_TIER[range]}${endParam}`)
         .then(toRawPoints)
         .catch(() => mockStockPoints(range, 1, now));
 
@@ -158,11 +170,11 @@ export async function fetchSeriesBundle(
     ? Promise.resolve([])
     : firstHistory
       ? get<HistoryResponse>(
-          `/markets/${encodeURIComponent(marketIds[histories.indexOf(firstHistory)])}/history?stock=${BENCHMARK_TICKER}&range=${upperRange}`,
+          `/markets/${encodeURIComponent(marketIds[histories.indexOf(firstHistory)])}/history?stock=${BENCHMARK_TICKER}&range=${upperRange}${endParam}`,
         )
           .then(historyStockPoints)
           .catch(() => mockStockPoints(range, 7, now, 520, 3))
-      : get<SeriesRow[]>(`/stocks/${BENCHMARK_TICKER}/prices?tier=${STOCK_TIER[range]}`)
+      : get<SeriesRow[]>(`/stocks/${BENCHMARK_TICKER}/prices?tier=${STOCK_TIER[range]}${endParam}`)
           .then(toRawPoints)
           .catch(() => mockStockPoints(range, 7, now, 520, 3)); // different walk from the stock's
 

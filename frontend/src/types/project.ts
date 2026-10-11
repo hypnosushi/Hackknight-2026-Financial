@@ -41,6 +41,12 @@ export interface WorkspaceState {
   marketsStatus: AsyncStatus;
   selectedMarketIds: string[];
   range: ChartRange;
+  /**
+   * Where the chart's window ends, as a calendar day ("2026-10-09"), or null
+   * for "now". Set by stepping back a day (arrows or dragging the chart).
+   * Not saved with a project: it's a viewing position, not part of the analysis.
+   */
+  chartDay: string | null;
   evidence: EvidenceAnnotation[];
   pinnedAnnotationId: string | null;
   queryResults: QueryResult[];
@@ -88,6 +94,7 @@ export const initialWorkspaceState: WorkspaceState = {
   marketsStatus: "idle",
   selectedMarketIds: [],
   range: "1m",
+  chartDay: null,
   evidence: [],
   pinnedAnnotationId: null,
   queryResults: [],

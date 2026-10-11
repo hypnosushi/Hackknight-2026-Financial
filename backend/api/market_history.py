@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from backend.api.deps import get_alpaca_gateway, get_db_engine
 from backend.ingestion.alpaca import AlpacaApiError, AlpacaApiGateway
+from backend.api.trading_days import parse_end, previous_day, snap_to_session, MAX_STEPS_BACK
 from backend.ingestion.alpaca.normalize import normalize_batch
 from backend.ingestion.kalshi.kalshi import REST_URL, fetch_candles, fetch_market
 from backend.models import Market
@@ -50,6 +51,7 @@ class HistoryOut(BaseModel):
     available_ranges: list[str]
     market: list[Point]
     stock: list[Point]
+    window_end: datetime  # where the window actually ended: `end` as given, or the last session with bars
 
 
 def available_ranges(open_time: datetime, now: datetime) -> list[str]:
@@ -105,13 +107,22 @@ async def _series_id(engine: AsyncEngine, ticker: str) -> str | None:
 @router.get("/{market_ticker}/history", response_model=HistoryOut)
 async def market_history(market_ticker: str, stock: str = Query(min_length=1, max_length=10),
                          range_: Range = Query("1D", alias="range"),
+                         end: str | None = Query(None, description="ISO 8601 window end; defaults to now"),
                          engine: AsyncEngine = Depends(get_db_engine),
                          alpaca: AlpacaApiGateway = Depends(get_alpaca_gateway)):
-    """The market's and the stock's close prices for one range, at the same interval."""
+    """The market's and the stock's close prices for one range, at the same interval, in the window
+    ending at `end` (now by default). The 1D window steps back to the last session with stock bars,
+    so asking on a Sunday shows Friday; `window_end` says where it landed.
+    """
     series = await _series_id(engine, market_ticker)
     if series is None:
         raise HTTPException(404, f"Unknown Kalshi market: {market_ticker}")
-    now = datetime.now(timezone.utc)
+    try:
+        now = parse_end(end)
+    except ValueError as exc:
+        raise HTTPException(400, f"Bad end: {exc}") from exc
+    if range_ == "1D":
+        now = snap_to_session(now)
     async with httpx.AsyncClient(base_url=REST_URL, timeout=15) as client:
         try:
             # The markets table has no open time; Kalshi's market endpoint does.
@@ -121,16 +132,22 @@ async def market_history(market_ticker: str, stock: str = Query(min_length=1, ma
             ranges = available_ranges(open_time, now)
             if range_ not in ranges:
                 raise HTTPException(400, f"{market_ticker} is too new for {range_}; available: {', '.join(ranges)}")
-            start, end = window(range_, open_time, now)
             _, interval_min, timeframe = RANGES[range_]
+            # Intraday only: a day the exchange was closed has no bars, so try the day before (holidays).
+            for _ in range(MAX_STEPS_BACK + 1):
+                start, end_at = window(range_, open_time, now)
+                try:
+                    bars = await asyncio.to_thread(alpaca.fetch_bars, stock.upper(), timeframe, start, end_at)
+                except AlpacaApiError as exc:
+                    raise HTTPException(502 if exc.retryable else 400, exc.message) from exc
+                if bars or range_ != "1D" or previous_day(now) < open_time:
+                    break
+                now = previous_day(now)
             candles = await fetch_candles(client, series, market_ticker, int(max(start, open_time).timestamp()),
-                                          int(end.timestamp()), interval_min)
+                                          int(end_at.timestamp()), interval_min)
         except httpx.HTTPError as exc:
             raise HTTPException(502, f"Kalshi request failed: {exc}") from exc
-    try:
-        bars = await asyncio.to_thread(alpaca.fetch_bars, stock.upper(), timeframe, start, end)
-    except AlpacaApiError as exc:
-        raise HTTPException(502 if exc.retryable else 400, exc.message) from exc
     return HistoryOut(market_ticker=market_ticker, stock_ticker=stock.upper(), range=range_,
                       interval=INTERVAL_LABEL[interval_min], available_ranges=ranges,
-                      market=market_points(candles), stock=stock_points(bars, stock.upper(), interval_min))
+                      market=market_points(candles), stock=stock_points(bars, stock.upper(), interval_min),
+                      window_end=end_at)

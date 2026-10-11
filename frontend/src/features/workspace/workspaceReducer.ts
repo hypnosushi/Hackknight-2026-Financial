@@ -11,6 +11,7 @@ export type WorkspaceAction =
   // One per backend response: `status` "running" means more links are still coming.
   | { type: "GRAPH_LOADED"; ticker: string; graph: CompanyGraph; status: GraphStatus }
   | { type: "GRAPH_READY" } // graph complete and every company revealed
+  | { type: "GRAPH_EXPANDED"; ticker: string; graph: CompanyGraph } // hop filter: a linked company's graph merged in
   | { type: "TAGS_STATUS"; status: AsyncStatus }
   | { type: "TAGS_LOADED"; tags: string[] }
   | { type: "MARKETS_STATUS"; status: AsyncStatus }
@@ -18,6 +19,8 @@ export type WorkspaceAction =
   | { type: "MARKET_TOGGLED"; marketId: string }
   | { type: "MARKET_ADDED"; market: MarketCard }
   | { type: "RANGE_CHANGED"; range: ChartRange }
+  | { type: "CHART_DAY_SHIFTED"; days: number } // +1 / -1 calendar day; forward of "now" clamps back to null
+  | { type: "CHART_DAY_RESET" } // back to "now"
   | { type: "GENERATE_PRESSED" } // Stage 5 — slide transition into market-view
   | { type: "EVIDENCE_ADDED"; annotation: EvidenceAnnotation }
   | { type: "EVIDENCE_REMOVED"; itemId: string } // by the tweet/article id, which is all the picker knows
@@ -63,6 +66,14 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       return { ...state, graph: action.graph, graphStatus };
     }
 
+    case "GRAPH_EXPANDED": {
+      // Same staleness rule as GRAPH_LOADED. The merge is done by the caller
+      // (lib/api/graph mergeGraphs) against the graph it was looking at; if a
+      // poll replaced the graph in between, that merge is simply redone later.
+      if (action.ticker !== state.ticker || state.stage === "market-view" || !state.graph) return state;
+      return action.graph === state.graph ? state : { ...state, graph: action.graph };
+    }
+
     case "GRAPH_READY":
       // Only ever a step forward from the build-out: tag generation may
       // already have moved the stage on by the time the last node lands.
@@ -103,6 +114,12 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
 
     case "RANGE_CHANGED":
       return { ...state, range: action.range };
+
+    case "CHART_DAY_SHIFTED":
+      return { ...state, chartDay: shiftDay(state.chartDay, action.days) };
+
+    case "CHART_DAY_RESET":
+      return state.chartDay === null ? state : { ...state, chartDay: null };
 
     case "GENERATE_PRESSED":
       return { ...state, stage: "market-view" };
@@ -170,4 +187,23 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
     default:
       return state;
   }
+}
+
+/** Today's date as "YYYY-MM-DD" in UTC, the calendar the backend's windows use. */
+export function todayUtc(now: number = Date.now()): string {
+  return new Date(now).toISOString().slice(0, 10);
+}
+
+/**
+ * Move the chart's day cursor. From "now" (null) a step back lands on
+ * yesterday; stepping forward onto or past today returns to "now" (null), so
+ * the chart never asks for a window in the future.
+ */
+export function shiftDay(day: string | null, days: number, now: number = Date.now()): string | null {
+  const today = todayUtc(now);
+  const from = day ?? today;
+  const next = new Date(`${from}T00:00:00Z`);
+  next.setUTCDate(next.getUTCDate() + days);
+  const result = next.toISOString().slice(0, 10);
+  return result >= today ? null : result;
 }

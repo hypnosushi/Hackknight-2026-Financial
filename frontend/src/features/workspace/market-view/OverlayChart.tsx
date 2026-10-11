@@ -1,5 +1,5 @@
 import { MagnifyingGlassPlus } from "@phosphor-icons/react";
-import { useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useContext, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { fetchSeriesBundle, type SeriesBundle } from "../../../lib/api/series";
 import { alignLevels, computeRelationship } from "../../../lib/chart/relationship";
 import type { NormalizedSeries } from "../../../types/market";
@@ -7,7 +7,7 @@ import { ThemeContext } from "../../theme/ThemeProvider";
 import { useWorkspace } from "../useWorkspace";
 import { OddsPanel } from "./OddsPanel";
 import { PricePanel } from "./PricePanel";
-import { RangeSelector } from "./RangeSelector";
+import { DayStepper, RangeSelector } from "./RangeSelector";
 import { RelationshipPanel } from "./RelationshipPanel";
 
 /**
@@ -115,14 +115,18 @@ export interface OverlayChartProps {
  * rolling correlation between SPY-adjusted stock returns and odds changes.
  * Components are thin; all math lives in lib/chart/relationship.ts.
  */
+/** Horizontal drag distance that steps the window one day. */
+const DRAG_PX_PER_DAY = 120;
+
 export function OverlayChart({ ticker, marketIds, children, className }: OverlayChartProps) {
-  const { state } = useWorkspace();
+  const { state, dispatch } = useWorkspace();
   const themeCtx = useContext(ThemeContext);
   const mode = themeCtx?.mode ?? "light";
 
   const effectiveTicker = ticker ?? state.ticker ?? "";
   const effectiveMarketIds = marketIds ?? state.selectedMarketIds;
   const range = state.range;
+  const chartDay = state.chartDay;
 
   const [bundle, setBundle] = useState<SeriesBundle | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "error" | "done">("idle");
@@ -146,6 +150,7 @@ export function OverlayChart({ ticker, marketIds, children, className }: Overlay
       effectiveMarketIds,
       range,
       Object.fromEntries(state.suggestedMarkets.map((m) => [m.marketId, m.title])),
+      chartDay,
     )
       .then((result) => {
         if (cancelled) return;
@@ -161,7 +166,7 @@ export function OverlayChart({ ticker, marketIds, children, className }: Overlay
     };
     // effectiveMarketIds is derived fresh each render from an array dep — stringify to avoid refetch loops.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveTicker, JSON.stringify(effectiveMarketIds), range]);
+  }, [effectiveTicker, JSON.stringify(effectiveMarketIds), range, chartDay]);
 
   const series = bundle?.series ?? null;
   const stock = series?.find((s) => s.kind === "stock") ?? null;
@@ -197,6 +202,28 @@ export function OverlayChart({ ticker, marketIds, children, className }: Overlay
         : null,
     [stock, bundle, relationshipMarket],
   );
+
+  // Drag the plot sideways to step days: right (pulling earlier data into view)
+  // goes back, left goes forward. Steps fire as the pointer crosses each
+  // DRAG_PX_PER_DAY, so a long drag walks several days without releasing.
+  // Recharts' own hover keeps working: nothing here calls preventDefault.
+  const drag = useRef<{ startX: number; stepped: number } | null>(null);
+  function onDragStart(e: ReactPointerEvent<HTMLDivElement>) {
+    if (e.button !== 0) return;
+    drag.current = { startX: e.clientX, stepped: 0 };
+  }
+  function onDragMove(e: ReactPointerEvent<HTMLDivElement>) {
+    const d = drag.current;
+    if (!d) return;
+    const steps = Math.trunc((e.clientX - d.startX) / DRAG_PX_PER_DAY);
+    if (steps !== d.stepped) {
+      dispatch({ type: "CHART_DAY_SHIFTED", days: -(steps - d.stepped) });
+      d.stepped = steps;
+    }
+  }
+  function onDragEnd() {
+    drag.current = null;
+  }
 
   const emptySeries = (series ?? []).filter((s) => s.points.length === 0);
   const shellClass = className ?? "flex h-full min-h-[360px] w-full flex-col gap-3 rounded-[var(--radius-panel)] p-4";
@@ -235,7 +262,10 @@ export function OverlayChart({ ticker, marketIds, children, className }: Overlay
             </button>
           ))}
         </div>
-        <RangeSelector available={bundle?.availableRanges} />
+        <div className="flex items-center gap-2">
+          <DayStepper windowEnd={domain ? domain[1] : null} />
+          <RangeSelector available={bundle?.availableRanges} />
+        </div>
       </div>
       {status === "loading" || status === "idle" ? (
         <ChartSkeleton />
@@ -252,7 +282,15 @@ export function OverlayChart({ ticker, marketIds, children, className }: Overlay
             </p>
           ))}
           {stock && domain ? (
-            <div className={`flex flex-1 flex-col overflow-y-auto ${view === "main" ? "gap-0" : "gap-2"}`}>
+            <div
+              className={`flex flex-1 flex-col overflow-y-auto ${view === "main" ? "gap-0" : "gap-2"}`}
+              onPointerDown={onDragStart}
+              onPointerMove={onDragMove}
+              onPointerUp={onDragEnd}
+              onPointerLeave={onDragEnd}
+              onPointerCancel={onDragEnd}
+              style={{ cursor: "grab", touchAction: "pan-y" }}
+            >
               {view === "main" ? (
                 <>
                   <PricePanel
@@ -267,7 +305,7 @@ export function OverlayChart({ ticker, marketIds, children, className }: Overlay
                     <>
                       {/* No band between the panels: the label and zoom toggle float over the odds plot
                           instead of sitting in a row of their own. */}
-                      <div className="relative">
+                      <div className="relative flex" style={{ flex: "4 1 auto" }}>
                         <OddsPanel
                           markets={markets}
                           domain={domain}
