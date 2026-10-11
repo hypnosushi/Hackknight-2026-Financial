@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from backend.entities import EntityAlias
+from backend.entities.loader import load_entities
 
 SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 CACHE_DIR = Path(__file__).resolve().parents[1] / ".cache" / "company_graph"
@@ -66,7 +67,11 @@ def short_name(name: str) -> str:
 
 
 class CompanyDirectory:
-    def __init__(self, companies: Iterable[Company]):
+    def __init__(self, companies: Iterable[Company], aliases: Iterable[EntityAlias] = ()):
+        """`aliases`: common names SEC's legal names don't contain ("Google" for Alphabet), from
+        backend/entities/data/sp500_top50.json by default (see get_directory). They join
+        resolve() and search(), so the ticker box takes the name people actually type.
+        """
         self._by_ticker: dict[str, Company] = {}
         self._by_name: dict[str, list[Company]] = {}
         self._ordered: list[tuple[str, str, Company]] = []  # (ticker lower, normalized name, company)
@@ -85,14 +90,25 @@ class CompanyDirectory:
             if norm:
                 self._by_name.setdefault(norm, []).append(c)
             self._ordered.append((c.symbol.lower(), norm, c))
+        # (normalized alias, company), only for aliases of listed companies.
+        self._aliases: list[tuple[str, Company]] = []
+        for entry in aliases:
+            company = self._by_ticker.get(entry.symbol.upper())
+            if company is None:
+                continue
+            for alias in entry.aliases:
+                norm = normalize_name(alias)
+                if norm and norm not in self._by_name:
+                    self._aliases.append((norm, company))
 
     @classmethod
-    def from_sec_json(cls, data: dict[str, Any]) -> "CompanyDirectory":
+    def from_sec_json(cls, data: dict[str, Any], aliases: Iterable[EntityAlias] = ()) -> "CompanyDirectory":
         """Parse SEC's {"0": {"cik_str": 1318605, "ticker": "TSLA", "title": "Tesla, Inc."}, ...}."""
         rows = data.values() if isinstance(data, dict) else data
         return cls(
-            Company(symbol=str(r["ticker"]).upper().strip(), name=str(r["title"]).strip(), cik=int(r["cik_str"]))
-            for r in rows
+            (Company(symbol=str(r["ticker"]).upper().strip(), name=str(r["title"]).strip(), cik=int(r["cik_str"]))
+             for r in rows),
+            aliases,
         )
 
     def __len__(self) -> int:
@@ -126,13 +142,18 @@ class CompanyDirectory:
             return matches[0]  # several share classes of one issuer: SEC lists the main one first
         if matches:
             return None  # different issuers with the same name: ambiguous
+        alias_hits = {c.cik: c for a, c in self._aliases if a == norm}
+        if len(alias_hits) == 1:
+            return next(iter(alias_hits.values()))
         # Lower-case single word ("tsla") that is not a company name.
         if " " not in token:
             return self._by_ticker.get(token.upper().replace(".", "-"))
         return None
 
     def search(self, prefix: str, limit: int = 10) -> list[Company]:
-        """Ticker-prefix matches first (shortest ticker first), then name-prefix matches in SEC order."""
+        """Ticker-prefix matches first (shortest ticker first), then alias-prefix matches ("goo" ->
+        Google -> GOOGL), then name-prefix matches in SEC order, then names containing the word.
+        """
         q = (prefix or "").strip().lower().lstrip("$")
         if not q or limit <= 0:
             return []
@@ -140,6 +161,10 @@ class CompanyDirectory:
         ticker_hits: list[Company] = []
         name_hits: list[Company] = []
         word_hits: list[Company] = []
+        alias_hits: list[Company] = []
+        for norm, c in self._aliases:
+            if norm.startswith(qn) and c not in alias_hits:
+                alias_hits.append(c)
         for tick, norm, c in self._ordered:
             if tick.startswith(q):
                 ticker_hits.append(c)
@@ -148,7 +173,10 @@ class CompanyDirectory:
             elif len(word_hits) < limit and f" {qn}" in f" {norm}":
                 word_hits.append(c)
         ticker_hits.sort(key=lambda c: len(c.symbol))
-        return (ticker_hits + name_hits + word_hits)[:limit]
+        seen: set[str] = set()
+        ranked = [c for c in ticker_hits + alias_hits + name_hits + word_hits
+                  if not (c.symbol in seen or seen.add(c.symbol))]
+        return ranked[:limit]
 
     def aliases_for(self, symbols: Iterable[str]) -> list[EntityAlias]:
         out: list[EntityAlias] = []
@@ -219,8 +247,8 @@ def load_sec_json(
 
 @lru_cache(maxsize=1)
 def get_directory() -> CompanyDirectory:
-    """The process-wide directory, loaded once."""
-    return CompanyDirectory.from_sec_json(load_sec_json())
+    """The process-wide directory, loaded once, with the seed aliases so names like "Google" resolve."""
+    return CompanyDirectory.from_sec_json(load_sec_json(), aliases=load_entities())
 
 
 def resolve(text: str) -> Company | None:

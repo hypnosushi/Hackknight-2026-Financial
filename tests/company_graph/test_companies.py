@@ -260,3 +260,19 @@ def test_size_rank_follows_secs_order_and_lookup_by_cik():
 ])
 def test_short_name_gives_the_name_filings_use(title, short):
     assert companies.short_name(title) == short
+
+
+def test_aliases_join_search_and_resolve():
+    from backend.entities import EntityAlias
+
+    directory = CompanyDirectory.from_sec_json(
+        SEC_FIXTURE, aliases=[EntityAlias(symbol="GOOGL", aliases=["Google", "Alphabet"]), EntityAlias(symbol="ZZZ", aliases=["Nobody"])]
+    )
+    # "goo" is a ticker prefix of GOOG/GOOGL and an alias prefix (Google); each company appears once.
+    assert sorted(c.symbol for c in directory.search("goo")) == ["GOOG", "GOOGL"]
+    assert [c.symbol for c in directory.search("googl")] == ["GOOGL"]
+    assert directory.search("google")[0].symbol == "GOOGL"
+    assert directory.resolve("google").symbol == "GOOGL"
+    assert directory.resolve("Google") is not None
+    # An alias for an unlisted symbol is ignored rather than crashing.
+    assert directory.search("nobody") == []
