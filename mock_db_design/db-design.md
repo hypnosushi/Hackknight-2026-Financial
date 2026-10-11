@@ -126,7 +126,7 @@ The company-network graph's edges.
 | `last_confirmed_at` | `TIMESTAMPTZ` | backs the "edge recency" filter |
 | `summary` | `TEXT` | one factual sentence on what the source states (Company Graph) |
 | `evidence_url` | `TEXT` | the filing the edge came from (Company Graph) |
-| `tags` | `TEXT[]` | short keywords from `summary` (e.g. `oil`, `memory`) for matching against Kalshi market categories — see F13 in `company-graph-tasks.md` |
+| `tags` | `TEXT[]` | short keywords from `summary` (e.g. `oil`, `memory`) for matching against Kalshi market categories — see F14 in `company-graph-tasks.md` |
 
 Unique on `(entity_symbol, related_entity_symbol, relationship_type)`.
 
@@ -191,7 +191,7 @@ Written by company graph F7 and by the enrichment worker (`market-search.md`),
 whose per-market status lives in `market_enrichment` (source, market_id, status,
 map_version, attempts, enriched_at, error).
 
-## 8. `trending_cards` + junctions
+## 9. `trending_cards` + junctions
 
 A generated summary card for an entity, with links back to what it was
 built from.

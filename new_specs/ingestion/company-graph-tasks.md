@@ -28,6 +28,7 @@ This feature replaces the deleted `new_specs/company-network.md` and answers its
 | F11 Demo tools | Not started, unblocked |
 | F12 X posts as events | Done, verified live (`company_graph/social_events.py`) |
 | F13 News about a linked pair | Done, verified live (`company_graph/pair_news.py`, `GET /graph/{ticker}/news/{other}`, the page's company panel) |
+| F14 Relationship tags (Haiku) | Not started, unblocked |
 
 ## Live results (2026-10-10)
 
@@ -97,7 +98,7 @@ Owners are taken from git history.
 | Which LLM provider? Who builds Jev? | F4, F6, F8 | Resolved: OpenRouter through `backend/llm`; Jev is `backend/classification`. |
 | Which stock price source? | F8 | Resolved: Alpaca, `backend/ingestion/alpaca`. |
 | Who owns `company-network.md`? | Nothing now | Resolved: that spec was deleted; this file replaces it. |
-| May `entity_relationships` gain `tags`? | F13 | Resolved: added (`TEXT[]`), `db-design.md` updated, column added on the shared Neon database via a manual `ALTER TABLE` (no migrations, so `create_all` won't add it to a table that already exists). |
+| May `entity_relationships` gain `tags`? | F14 | Resolved: added (`TEXT[]`), `db-design.md` updated, column added on the shared Neon database via a manual `ALTER TABLE` (no migrations, so `create_all` won't add it to a table that already exists). |
 
 ## Rules for the agent
 
@@ -123,7 +124,7 @@ All of these exist. The models are in `backend/models/`, and the allowed values 
 | Table | Columns |
 | --- | --- |
 | `entities` | `symbol` (pk), `name`, `type` (`company`, `person`, `industry`), `created_at` |
-| `entity_relationships` | `id` (UUID), `entity_symbol` and `related_entity_symbol` (both foreign keys to `entities`), `relationship_type`, `weight`, `confidence`, `source`, `last_confirmed_at`, `summary`, `evidence_url`, `tags` (`TEXT[]`, nullable, F13); unique on (`entity_symbol`, `related_entity_symbol`, `relationship_type`) |
+| `entity_relationships` | `id` (UUID), `entity_symbol` and `related_entity_symbol` (both foreign keys to `entities`), `relationship_type`, `weight`, `confidence`, `source`, `last_confirmed_at`, `summary`, `evidence_url`, `tags` (`TEXT[]`, nullable, F14); unique on (`entity_symbol`, `related_entity_symbol`, `relationship_type`) |
 | `market_entities` | `source`, `market_id`, `entity_symbol` (composite pk; no foreign key to `markets`) |
 
 - `relationship_type` is one of `supplier`, `customer`, `partner`, `competitor`, `sector_peer`. It describes the related company's role: `supplier` means the related company supplies the entity.
@@ -188,7 +189,7 @@ The result is called a highlight, not a signal, because `alert_detector/signals.
 | --- | --- | --- |
 | Done | F0 to F10, F12 | |
 | 1 | F11 Demo tools | Nothing |
-| 1 | F13 Relationship tags (Haiku) | Nothing (reads `entity_relationships` rows F4/F5 already saved) |
+| 1 | F14 Relationship tags (Haiku) | Nothing (reads `entity_relationships` rows F4/F5 already saved) |
 
 Suggested next, outside the original plan: colour the searched company when a highlight targets it (frontend), fit the graph to its box on load (frontend), and deploy (see the team's hosting plan).
 
@@ -379,7 +380,7 @@ Do not compare odds yourself. `market_prices` keeps only 30 minutes of rows, and
 
 **Done when:** after prewarming, a search for those tickers returns links in under one second, and a replay highlights a node on an open page within 5 seconds.
 
-## F13. Relationship tags (Haiku)
+## F14. Relationship tags (Haiku)
 
 **Status:** not started, unblocked. **Touches the team's design:** yes — `entity_relationships` gains `tags` (`TEXT[]`, nullable). Already resolved and applied: column added on the shared Neon database, `db-design.md` updated, model updated (`backend/models/entity_relationship.py`). **File:** `company_graph/tags.py`
 
