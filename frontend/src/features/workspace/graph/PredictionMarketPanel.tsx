@@ -355,7 +355,9 @@ export function PredictionMarketPanel({ ticker }: { ticker: string | null }) {
               : `No markets found for ${ticker ?? "this company"} yet.`}
           </p>
         ) : (
-          <ul className="flex min-h-0 flex-col gap-1.5 overflow-y-auto pr-1">
+          {/* Fixed viewport of about four cards (10 are loaded): the list scrolls instead of
+              pushing the live-moves section down or changing height as results change. */}
+          <ul className="flex max-h-[19rem] min-h-0 flex-col gap-1.5 overflow-y-auto pr-1">
             {items.map((m) => (
               <MarketCard
                 key={m.id}
