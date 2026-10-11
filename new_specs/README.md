@@ -40,6 +40,7 @@ specs below:
 | [company-network.md](./company-network.md) | Draft |
 | [trending-cards.md](./trending-cards.md) | Draft |
 | [display-charting.md](./display-charting.md) | Draft |
+| [market-search.md](./market-search.md) — entity enrichment + search API | Built (backend) |
 | [news-graphing.md](./news-graphing.md) *(name TBD)* | Draft |
 | [fastapi.md](./fastapi.md) | Draft — scaffolding only |
 | [shared-db-hosting.md](./shared-db-hosting.md) | Draft |

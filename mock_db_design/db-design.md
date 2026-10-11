@@ -52,7 +52,7 @@ The thing being tracked — a company, a person, or an industry.
 |---|---|---|
 | `symbol` | `TEXT` (PK) | e.g. `"NVDA"`, `"Trump"`, `"Semiconductors"` |
 | `name` | `TEXT` | display name |
-| `type` | `TEXT` | `company` \| `person` \| `industry` |
+| `type` | `TEXT` | `company` \| `person` \| `industry`; the entity map (`market-search.md`) adds `country` \| `sector` \| `event` \| `resource` |
 | `created_at` | `TIMESTAMPTZ` | |
 
 ## 2. `messages`
@@ -164,6 +164,11 @@ company-network?"
 | `entity_symbol` | FK → `entities.symbol` |
 
 PK: `(source, market_id, entity_symbol)`.
+
+**Built:** without foreign keys to `markets` (reset_db drops it with CASCADE).
+Written by company graph F7 and by the enrichment worker (`market-search.md`),
+whose per-market status lives in `market_enrichment` (source, market_id, status,
+map_version, attempts, enriched_at, error).
 
 ## 8. `trending_cards` + junctions
 

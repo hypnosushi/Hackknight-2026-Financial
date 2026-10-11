@@ -42,6 +42,7 @@ class MultiSelectSpec(BaseModel):
     mode: Literal["multi_select"] = "multi_select"
     labels: dict[str, str | None]  # label -> description, e.g. {"affects_downstream_distributors": "..."}
     threshold: float = 0.5
+    question: str | None = None  # per-label wording with a {label} placeholder; None = the category question
 
 
 class ScoreSpec(BaseModel):
@@ -114,7 +115,8 @@ def _interpret_choice(spec: ChoiceSpec, answers: dict[str, JevAnswer]) -> Classi
 def _build_multi_select(spec: MultiSelectSpec, state: str) -> dict[str, JevQuestion]:
     return {
         label: NoulQuestion(
-            instructions=f"Does this content apply to the category {label!r}?"
+            instructions=(spec.question.format(label=label) if spec.question
+                          else f"Does this content apply to the category {label!r}?")
             + (f" ({description})" if description else "")
         )
         for label, description in spec.labels.items()

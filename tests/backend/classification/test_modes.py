@@ -136,3 +136,14 @@ def test_score_interprets_score_answer():
     assert result.label is None
     assert result.score == 1.2
     assert result.confidence == 0.85
+
+
+def test_multi_select_uses_custom_question_wording_when_given():
+    build, _ = MODE_HANDLERS["multi_select"]
+    spec = MultiSelectSpec(labels={"Tesla, Inc.": "also known as Tesla", "Gold": None},
+                           question="Is this market about {label}?")
+
+    questions = build(spec, "state")
+
+    assert questions["Tesla, Inc."].instructions == "Is this market about Tesla, Inc.? (also known as Tesla)"
+    assert questions["Gold"].instructions == "Is this market about Gold?"
