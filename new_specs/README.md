@@ -42,6 +42,7 @@ specs below:
 | [display-charting.md](./display-charting.md) | Draft |
 | [market-search.md](./market-search.md) — entity enrichment + search API | Built (backend) |
 | [market-price-history.md](./market-price-history.md) — market + stock chart data | Built (backend) |
+| [top-markets-helper.md](./top-markets-helper.md) — top 3 markets for a company | Built (backend) |
 | [news-graphing.md](./news-graphing.md) *(name TBD)* | Draft |
 | [fastapi.md](./fastapi.md) | Draft — scaffolding only |
 | [shared-db-hosting.md](./shared-db-hosting.md) | Draft |

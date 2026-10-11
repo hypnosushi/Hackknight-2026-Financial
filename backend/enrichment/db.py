@@ -7,7 +7,7 @@ shared connect() (which runs create_all) builds them too, as company_graph/db.py
 
 from datetime import datetime, timezone
 
-from sqlalchemy import case, delete, func, or_, select
+from sqlalchemy import case, delete, func, literal, or_, select, union_all
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.schema import CreateIndex
@@ -16,11 +16,12 @@ from backend.entities import EntityMap
 from backend.ingestion.common.db import DEMO_SERIES, connect
 from backend.models import Market
 from backend.models.entity import Entity
+from backend.models.entity_relationship import EntityRelationship
 from backend.models.market_enrichment import MarketEnrichment
 from backend.models.market_entity import MarketEntity
 
 __all__ = ["connect", "sync_entity_map", "events_to_enrich", "sibling_tags", "mark_pending", "save_result",
-           "save_failure", "autocomplete", "get_entity", "markets_for_entity"]
+           "save_failure", "autocomplete", "get_entity", "markets_for_entity", "graph_links", "top_markets"]
 
 MAX_ATTEMPTS = 3  # failures in a row under one map version before a market is left alone
 ERROR_MAX_CHARS = 500
@@ -181,6 +182,53 @@ async def markets_for_entity(engine: AsyncEngine, symbol: str, limit: int) -> li
                    & (MarketEntity.market_id == Market.market_id))
              .where(MarketEntity.entity_symbol == symbol)
              .order_by((Market.status == "active").desc(), Market.close_time.asc().nulls_last(), Market.market_id)
+             .limit(limit))
+    async with engine.connect() as conn:
+        return [dict(r._mapping) for r in await conn.execute(query)]
+
+
+async def graph_links(engine: AsyncEngine, symbol: str) -> list[str]:
+    """Companies the company graph links to `symbol` from filings, in either direction.
+    Sector-peer links are left out: they are a weak SIC-code fallback.
+    """
+    r = EntityRelationship
+    other = case((r.entity_symbol == symbol, r.related_entity_symbol), else_=r.entity_symbol)
+    query = (select(other).distinct()
+             .where(or_(r.entity_symbol == symbol, r.related_entity_symbol == symbol), r.source == "filing"))
+    async with engine.connect() as conn:
+        return sorted((await conn.execute(query)).scalars())
+
+
+async def top_markets(engine: AsyncEngine, tiers: dict[str, int], limit: int) -> list[dict]:
+    """The best active market per series among markets tagged with any of `tiers`' entities
+    (entity symbol -> tier, 1 = best), ranked by best tier, then most tags matched, then soonest
+    to close. One query.
+
+    One market per series (a market without one: per event): a series is one recurring question
+    ("NVIDIA A100 average hourly price", one event per month), so without this the top results
+    are the same question for different months, or the strikes of one event.
+    """
+    if not tiers:
+        return []
+    tags = union_all(*(select(literal(s).label("symbol"), literal(t).label("tier")) for s, t in tiers.items())).cte("tags")
+    group_key = func.coalesce(Market.series_id, Market.event_id, Market.market_id).label("group_key")
+    hits = (select(Market.source, Market.market_id, Market.event_id, Market.series_id, group_key, Market.title,
+                   Market.outcome_label, Market.event_title, Market.close_time, Market.url,
+                   func.min(tags.c.tier).label("tier"),
+                   func.array_agg(MarketEntity.entity_symbol.distinct()).label("matched"))
+            .select_from(tags)
+            .join(MarketEntity, MarketEntity.entity_symbol == tags.c.symbol)
+            .join(Market, (Market.source == MarketEntity.source) & (Market.market_id == MarketEntity.market_id))
+            .where(Market.status == "active")
+            .group_by(Market.source, Market.market_id)
+            .cte("hits"))
+    per_series = (select(hits).distinct(hits.c.source, hits.c.group_key)
+                  .order_by(hits.c.source, hits.c.group_key, hits.c.tier, func.cardinality(hits.c.matched).desc(),
+                            hits.c.close_time.asc().nulls_last(), hits.c.market_id)
+                  .subquery())
+    query = (select(per_series)
+             .order_by(per_series.c.tier, func.cardinality(per_series.c.matched).desc(),
+                       per_series.c.close_time.asc().nulls_last())
              .limit(limit))
     async with engine.connect() as conn:
         return [dict(r._mapping) for r in await conn.execute(query)]

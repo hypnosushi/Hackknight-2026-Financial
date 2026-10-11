@@ -1,8 +1,10 @@
-"""`/entities` router: autocomplete over the entity map, and every market linked to one entity.
+"""`/entities` router: autocomplete over the entity map, every market linked to one entity, and a
+company's top markets (new_specs/top-markets-helper.md).
 
 Mounted in backend/main.py. Read-only: the enrichment worker creates and fills the tables.
 """
 
+import asyncio
 from datetime import datetime
 from typing import Literal
 
@@ -11,14 +13,18 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from backend.api.deps import get_db_engine
+from backend.classification import JevError
 from backend.enrichment import db
+from backend.enrichment.rerank import rerank
+from backend.enrichment.tag_match import match_tags
 from backend.entities import load_entity_map
 
 router = APIRouter(prefix="/entities", tags=["entities"])
 
 Category = Literal["company", "country", "sector", "event", "resource", "person"]  # CATEGORIES's keys
 
-_MAP_SYMBOLS = load_entity_map().symbols
+_MAP = load_entity_map()
+_MAP_SYMBOLS = _MAP.symbols
 
 
 class EntityOut(BaseModel):
@@ -64,3 +70,76 @@ async def entity_markets(entity_id: str, limit: int = Query(200, ge=1, le=1000),
         raise HTTPException(404, f"Unknown entity: {entity_id}")
     markets = await db.markets_for_entity(engine, entity_id, limit)
     return EntityMarketsOut(entity=_entity(entity), markets=[MarketOut(**m) for m in markets])
+
+
+class TagOut(BaseModel):
+    input: str | None  # the caller's tag, or None for a company-graph link
+    id: str
+    name: str
+    category: str
+    source: str  # 'tag' (matched from the caller's tag) | 'graph' (company graph link)
+
+
+class TopMarketOut(BaseModel):
+    source: str
+    market_id: str
+    event_id: str | None
+    title: str | None
+    outcome_label: str | None
+    event_title: str | None
+    close_time: datetime | None
+    url: str | None
+    tier: int  # 1 = tagged with the company, 2 = a linked company, 3 = one of the tags
+    matched: list[str]  # the entities that made it match
+    relevance: float | None = None  # Jev's probability that it matters to the company (rerank only)
+
+
+class TopMarketsOut(BaseModel):
+    company: EntityOut
+    tags: list[TagOut]
+    unmatched_tags: list[str]  # tags nothing in the entity map fits
+    markets: list[TopMarketOut]
+
+
+@router.get("/{company_id}/top-markets", response_model=TopMarketsOut)
+async def top_markets(company_id: str, tags: list[str] = Query([], max_length=20),
+                      limit: int = Query(3, ge=1, le=10), rerank_: bool = Query(False, alias="rerank"),
+                      candidates: int = Query(50, ge=1, le=200), engine: AsyncEngine = Depends(get_db_engine)):
+    """The company's top markets: its own first, then linked companies', then the tags'.
+    Free-text tags ("ev", "microchips") are matched to map entities, by one Jev call if needed.
+    With `rerank=true`, the tag query's top `candidates` events are scored by Jev for how much
+    they matter to the company, and only those scoring 0.5 or more are returned, best first.
+    """
+    company = await db.get_entity(engine, company_id)
+    if company is None or company["type"] != "company":
+        raise HTTPException(404, f"Unknown company: {company_id}")
+    try:
+        matched = await asyncio.to_thread(match_tags, tags, _MAP) if tags else {}
+    except JevError as exc:
+        raise HTTPException(502, f"Tag matching failed: {exc}") from exc
+    links = await db.graph_links(engine, company_id)
+
+    tiers = {company_id: 1}
+    tag_out = []
+    for symbol in links:
+        tiers.setdefault(symbol, 2)
+    for tag, entity in matched.items():
+        if entity is not None:
+            tiers.setdefault(entity.symbol, 3)
+            tag_out.append(TagOut(input=tag, id=entity.symbol, name=entity.name, category=entity.category,
+                                  source="tag"))
+    by_symbol = {e.symbol: e for e in _MAP.entities}
+    tag_out += [TagOut(input=None, id=s, name=by_symbol[s].name if s in by_symbol else s, category="company",
+                       source="graph") for s in links]
+    markets = await db.top_markets(engine, tiers, candidates if rerank_ else limit)
+    if rerank_:
+        related = [t.name for t in tag_out]
+        try:
+            scored = await asyncio.to_thread(rerank, company["name"], related, markets)
+        except JevError as exc:
+            raise HTTPException(502, f"Reranking failed: {exc}") from exc
+        markets = [{**m, "relevance": round(score, 3)} for m, score in scored[:limit]]
+    fields = TopMarketOut.model_fields
+    return TopMarketsOut(company=_entity(company), tags=tag_out,
+                         unmatched_tags=[t for t, e in matched.items() if e is None],
+                         markets=[TopMarketOut(**{k: m[k] for k in fields if k in m}) for m in markets])

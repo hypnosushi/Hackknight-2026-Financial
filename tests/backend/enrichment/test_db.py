@@ -135,3 +135,12 @@ def test_markets_for_entity_joins_market_entities():
     run(db.markets_for_entity(engine, "TSLA", 200))
     (sql,) = engine.sql
     assert "JOIN market_entities" in sql and "market_entities.entity_symbol = 'TSLA'" in sql
+
+
+def test_top_markets_keeps_one_market_per_series():
+    engine = RecordingEngine()
+    assert run(db.top_markets(engine, {"NVDA": 1, "Semiconductors": 3}, 10)) == []
+    (sql,) = engine.sql
+    assert "coalesce(markets.series_id, markets.event_id, markets.market_id) AS group_key" in sql
+    assert "DISTINCT ON (hits.source, hits.group_key)" in sql
+    assert "markets.status = 'active'" in sql and "LIMIT 10" in sql
