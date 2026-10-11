@@ -8,8 +8,6 @@ import { useWorkspace } from "../useWorkspace";
 
 /** Keystroke-to-search delay: the directory search is cheap, but one request per keystroke is still noise. */
 const SEARCH_DEBOUNCE_MS = 150;
-/** A typed value that looks like a ticker ("NVDA", "$brk.b") is submitted as is, no lookup needed. */
-const TICKER_SHAPE = /^\$?[A-Za-z]{1,5}([.-][A-Za-z])?$/;
 
 /**
  * Stage 0 — the only thing on the empty canvas. Deliberately spare: the design
@@ -66,15 +64,29 @@ export function TickerInput() {
     dispatch({ type: "TICKER_SUBMITTED", ticker: trimmed });
   }
 
-  // Enter: the highlighted suggestion; else a ticker-shaped value as typed; else the best
-  // name match ("nvidia" -> NVDA). A name with no match is sent through anyway so the
-  // backend's 404 message ("not a listed company") explains what happened.
+  // Enter: the highlighted suggestion, else resolve what was typed. The lookup is awaited
+  // here rather than read from the debounced `matches`, so Enter right after typing
+  // "amazon" can't submit the literal word as a ticker. An exact ticker in the results
+  // wins ("A" is Agilent, not the first name starting with "a"); otherwise the best match;
+  // with no match at all the text goes through so the backend's 404 explains it.
+  async function resolveAndSubmit(typed: string) {
+    const upper = typed.replace(/^\$/, "").toUpperCase();
+    const found =
+      matches.length > 0
+        ? matches
+        : await searchCompanies(typed).catch(() => [] as CompanyRef[]);
+    const exact = found.find(
+      (c) => c.symbol === upper || c.symbol === upper.replace(".", "-"),
+    );
+    submit(exact?.symbol ?? found[0]?.symbol ?? typed);
+  }
+
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
     const typed = value.trim();
+    if (!typed) return;
     if (active >= 0 && matches[active]) return submit(matches[active].symbol);
-    if (TICKER_SHAPE.test(typed) || matches.length === 0) return submit(typed);
-    submit(matches[0].symbol);
+    void resolveAndSubmit(typed);
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLInputElement>) {
