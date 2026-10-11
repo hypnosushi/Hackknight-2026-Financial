@@ -34,6 +34,7 @@ question/result output. Classification is a runtime step on top of
 - `entities` — symbol, name, type, created_at
 - `messages` — id, source, source_native_id, author, title, text, url, published_at, created_at
 - `message_entities` — message_id, entity_symbol
+- `twitter_watchlist` — id, type, value, entity_symbol, is_active, created_at
 - `entity_relationships` — id, entity_symbol, related_entity_symbol, relationship_type, weight, confidence, source, last_confirmed_at
 - `markets` — source, market_id, question, created_at
 - `market_prices` — id, source, market_id, price_or_odds, volume, timestamp
@@ -90,7 +91,26 @@ PK: `(message_id, entity_symbol)`. Index on `(entity_symbol, message_id)`
 for fast per-entity lookups — this also backs `company-network.md`'s
 "minimum co-mention count" filter.
 
-## 4. `entity_relationships`
+## 4. `twitter_watchlist`
+
+The shared, system-wide list of what the Twitter Aggregator polls for.
+Resolves `twitter-aggregator.md`'s open question ("curated manually, or
+user-configurable?") — it's a configurable shared list, not hardcoded and
+not a per-user private watchlist.
+
+| column | type | notes |
+|---|---|---|
+| `id` | `UUID` (PK) | |
+| `type` | `TEXT` | `account` \| `hashtag` \| `cashtag` \| `keyword` |
+| `value` | `TEXT` | the handle/tag/term itself, e.g. `"elonmusk"`, `"#AI"`, `"NVDA"`, `"rate cut"` |
+| `entity_symbol` | `TEXT` | nullable FK → `entities.symbol` — set when a `cashtag` entry maps to a tracked entity, null for `account`/`hashtag`/`keyword` entries |
+| `is_active` | `BOOLEAN` | default `true` — lets an entry be turned off without deleting it |
+| `created_at` | `TIMESTAMPTZ` | |
+
+Before each poll, `twitter-aggregator.md` reads the active rows here to
+build its account/hashtag/cashtag/keyword query.
+
+## 5. `entity_relationships`
 
 The company-network graph's edges.
 
@@ -106,6 +126,7 @@ The company-network graph's edges.
 | `last_confirmed_at` | `TIMESTAMPTZ` | backs the "edge recency" filter |
 | `summary` | `TEXT` | one factual sentence on what the source states (Company Graph) |
 | `evidence_url` | `TEXT` | the filing the edge came from (Company Graph) |
+| `tags` | `TEXT[]` | short keywords from `summary` (e.g. `oil`, `memory`) for matching against Kalshi market categories — see F13 in `company-graph-tasks.md` |
 
 Unique on `(entity_symbol, related_entity_symbol, relationship_type)`.
 
@@ -117,7 +138,7 @@ company's role: `supplier`, `customer`, `partner`, `competitor` or
 `sector_peer` (`supplier` is the old `dependency`). Model:
 `backend/models/entity_relationship.py`.
 
-## 5. `markets`
+## 6. `markets`
 
 Static metadata for a prediction market a user has selected/browsed.
 
@@ -130,7 +151,7 @@ Static metadata for a prediction market a user has selected/browsed.
 
 PK: `(source, market_id)`.
 
-## 6. `market_prices`
+## 7. `market_prices`
 
 Time-series price/odds data for a market — what gets overlaid on a stock
 chart in `display-charting.md`.
@@ -150,7 +171,7 @@ actually needs (a market's price history over a range).
 **From:** `polymarket.md` / `kalshi.md`'s shared draft market data-point
 shape.
 
-## 7. `market_entities` *(speculative)*
+## 8. `market_entities` *(speculative)*
 
 Links a market to the compan(ies) it affects. Only build this once the open
 question in `polymarket.md` is resolved — "how does a user/system find the
@@ -231,6 +252,9 @@ Each row is a marker to plot on `display-charting.md`'s chart at
 
 ## Known open questions (not resolved here)
 
+- ~~Final list of tracked accounts/hashtags/cashtags — curated manually, or
+  user-configurable?~~ Resolved: `twitter_watchlist` is a shared,
+  user-configurable list.
 - How is `entity_relationships` actually populated — by industry, supply
   chain, production, or distribution? (`company-network.md`)
 - How does a market in `markets` get linked to the company/companies it
