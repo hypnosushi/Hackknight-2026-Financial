@@ -12,7 +12,7 @@ import {
   summaryDetail,
   timeAgo,
 } from "./alertFormat";
-import { LIVE_WINDOW_MINUTES, useLiveAlerts } from "./LiveAlertsProvider";
+import { LIVE_WINDOW_LABEL, useLiveAlerts } from "./LiveAlertsProvider";
 
 /**
  * A tappable company chip. Tier 1 is solid (the market is about it); tiers 2
@@ -251,7 +251,7 @@ export function AlertsFeed() {
                     className="text-[10px] font-semibold uppercase tracking-wider"
                     style={{ color: "var(--text-tertiary)" }}
                   >
-                    Live alerts · last {LIVE_WINDOW_MINUTES} min
+                    Live alerts · last {LIVE_WINDOW_LABEL}
                   </span>
                   <button
                     type="button"

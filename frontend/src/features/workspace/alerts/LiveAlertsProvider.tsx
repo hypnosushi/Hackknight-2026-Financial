@@ -10,8 +10,15 @@ import type { AlertDirection, RecentAlert } from "../../../types/alert";
 import type { PredictionMarket } from "../../../types/predictionMarket";
 import { useRecentAlerts, type AlertsStatus } from "./useAlerts";
 
-/** Alerts newer than this feed the sidebar's live list, the bell, and the node flash. */
-export const LIVE_WINDOW_MINUTES = 60;
+/**
+ * Alerts newer than this feed the sidebar's live list, the bell, and the node flash.
+ * 24h, matching the company panel: alerts need a 3-sigma move in 5 minutes, so a
+ * 60-minute window went blank for most of a quiet day.
+ */
+export const LIVE_WINDOW_MINUTES = 24 * 60;
+/** Human label for the window, e.g. "24h" or "90 min". */
+export const LIVE_WINDOW_LABEL =
+  LIVE_WINDOW_MINUTES % 60 === 0 ? `${LIVE_WINDOW_MINUTES / 60}h` : `${LIVE_WINDOW_MINUTES} min`;
 
 /**
  * The detector's score adds up to ~3 for a price move (|z|/3, capped), ~3 for a

@@ -13,7 +13,7 @@ import {
 } from "./alertFormat";
 import {
   LARGE_MOVE_SCORE,
-  LIVE_WINDOW_MINUTES,
+  LIVE_WINDOW_LABEL,
   useLiveAlerts,
 } from "./LiveAlertsProvider";
 import { useAutoScroll } from "./useAutoScroll";
@@ -173,7 +173,7 @@ export function LiveEventsList() {
           className="text-[10px] font-semibold uppercase tracking-wider"
           style={{ color: "var(--text-tertiary)" }}
         >
-          Live · large moves · {LIVE_WINDOW_MINUTES} min
+          Live · large moves · {LIVE_WINDOW_LABEL}
         </span>
         {large.length > 0 && (
           <span
